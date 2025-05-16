@@ -1,5 +1,6 @@
 #include <stdint.h>
-#include <Windows.h>
+#include <windows.h>
+#include <ShObjIdl.h>
 #include <xmmintrin.h>
 
 #if DEBUG_SLOW
@@ -27,8 +28,13 @@ typedef int32 bool32;
 #define internal static
 #define global static
 
+//TODO: PNG STRUCTURE HERE 
+
 global int64 Global_PerfCounterFrequency;
 global bool GlobalRunning;
+
+
+//TODO: PNG FUNCTIONS HERE
 
 //NOTE: This is all for timing and testing purposes
 inline LARGE_INTEGER
@@ -199,17 +205,38 @@ WinMain
 		int ShowCode
 )
 {
-		WNDCLASSA WindowClass = {};
+	WNDCLASSA WindowClass = {};
 
-		WindowClass.lpfnWndProc   = WindowsCallback; // Windows OS Callback
-		WindowClass.hInstance     = instance;
-		WindowClass.style         = CS_HREDRAW | CS_VREDRAW;
-		WindowClass.lpszClassName = "WIN32_APP";
+	WindowClass.lpfnWndProc   = WindowsCallback; // Windows OS Callback
+	WindowClass.hInstance     = instance;
+	WindowClass.style         = CS_HREDRAW | CS_VREDRAW;
+	WindowClass.lpszClassName = "WIN32_APP";
 
-		if( RegisterClassA( &WindowClass ) )
+	HRESULT hr = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE );
+
+	if( SUCCEEDED(hr) )
+	{
+
+		IFileOpenDialog* FileDialog;
+		hr = CoCreateInstance( CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, (void**)&FileDialog );
+
+		if( SUCCEEDED(hr) )
 		{
-				HWND Window = CreateWindowExA
-						(
+			//Filter Name, Pattern
+			COMDLG_FILTERSPEC FilterSpec[1] = { L"PNG", L"*.png" };
+
+			hr = FileDialog->SetFileTypes( 1, FilterSpec );
+			if( SUCCEEDED(hr) )
+			{
+				hr  = FileDialog->Show( NULL );
+				if( SUCCEEDED(hr) )
+				{
+
+					if( RegisterClassA( &WindowClass ) )
+					{
+						//TODO: Create an internal structure for holding the pixel data of a png
+						HWND Window = CreateWindowExA
+							(
 								0,
 								WindowClass.lpszClassName,
 								"WIN32_APP",
@@ -220,25 +247,29 @@ WinMain
 								0,
 								instance,
 								0
-				);
+						);
 
-				real32 TargetSecondsPerFrame = 1.0f / 60;
-				UINT DesiredSchedulerMS = 1;
-				bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+						real32 TargetSecondsPerFrame = 1.0f / 60;
+						UINT DesiredSchedulerMS = 1;
+						bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
 
-				LARGE_INTEGER PerfCounterFrequencyResult;
-				QueryPerformanceFrequency( &PerfCounterFrequencyResult );
-				Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+						LARGE_INTEGER PerfCounterFrequencyResult;
+						QueryPerformanceFrequency( &PerfCounterFrequencyResult );
+						Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
 
-				if( Window )
-				{
-						LARGE_INTEGER LastCounter = Win_GetWallClock();
-						GlobalRunning = true;
-
-
-						while( GlobalRunning )
+						//TODO: Initialize the COM LIBRARY
+						//TODO: Create a new dialog box to select a file with the extension .PNG
+						//TODO: Get the selected file and then load the PNG Stream
+						if( Window )
 						{
+							LARGE_INTEGER LastCounter = Win_GetWallClock();
+							GlobalRunning = true;
 
+
+							while( GlobalRunning )
+							{
+
+								//TODO: Render/Draw the PNG
 								ProcessPendingMessages();
 
 								LARGE_INTEGER WorkCounter = Win_GetWallClock();
@@ -247,44 +278,50 @@ WinMain
 								real32 SecondsElapsedForFrame = WorkSecondsElapsed;
 								if( SecondsElapsedForFrame < TargetSecondsPerFrame )
 								{
-										if( SleepIsGranular )
+									if( SleepIsGranular )
+									{
+										DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
+										if(SleepMS > 0)
 										{
-												DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
-												if(SleepMS > 0)
-												{
-														Sleep(SleepMS);
-												}
+											Sleep(SleepMS);
 										}
+									}
 
-										real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+									real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
 
 
-										if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
-										{
-												//TODO: Log the missed sleep here
+									if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+									{
+										//TODO: Log the missed sleep here
 
-										}
+									}
 
-										while( SecondsElapsedForFrame < TargetSecondsPerFrame )
-										{
-												SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
-										}
+									while( SecondsElapsedForFrame < TargetSecondsPerFrame )
+									{
+										SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
+									}
 								}
 								else
 								{
-										//TODO: MISSED FRAME RATE
-										//TODO: Logging
+									//TODO: MISSED FRAME RATE
+									//TODO: Logging
 								}
 								LARGE_INTEGER EndCounter = Win_GetWallClock();
 								LastCounter = EndCounter;
+							}
 						}
+					}
+					else
+					{ //NOTE: Failed to register window class with the OS
+
+					}
 				}
-
+			}
+			FileDialog->Release();
 		}
-		else
-		{ //NOTE: Failed to register window class with the OS
+	}
 
-		}
+	CoUninitialize();
 
-		return 0;
+	return 0;
 }
