@@ -10,6 +10,7 @@
 #endif
 
 #define ArrayCount(Array) ( sizeof(Array) / sizeof( ( Array )[0] ) )
+#define WIN32_FILE_NAME_COUNT MAX_PATH
 
 typedef int8_t int8;
 typedef int16_t int16;
@@ -28,13 +29,10 @@ typedef int32 bool32;
 #define internal static
 #define global static
 
-//TODO: PNG STRUCTURE HERE 
+#include "PNG.h"
 
 global int64 Global_PerfCounterFrequency;
 global bool GlobalRunning;
-
-
-//TODO: PNG FUNCTIONS HERE
 
 //NOTE: This is all for timing and testing purposes
 inline LARGE_INTEGER
@@ -231,89 +229,128 @@ WinMain
 				hr  = FileDialog->Show( NULL );
 				if( SUCCEEDED(hr) )
 				{
-
-					if( RegisterClassA( &WindowClass ) )
+					IShellItem *pItem;
+					hr = FileDialog->GetResult( &pItem );
+					if( SUCCEEDED(hr) )
 					{
-						//TODO: Create an internal structure for holding the pixel data of a png
-						HWND Window = CreateWindowExA
-							(
-								0,
-								WindowClass.lpszClassName,
-								"WIN32_APP",
-								WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-								//Size & Position
-								CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-								0,
-								0,
-								instance,
-								0
-						);
+						PWSTR Filename;
+						hr = pItem->GetDisplayName( SIGDN_FILESYSPATH, &Filename );
 
-						real32 TargetSecondsPerFrame = 1.0f / 60;
-						UINT DesiredSchedulerMS = 1;
-						bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
-
-						LARGE_INTEGER PerfCounterFrequencyResult;
-						QueryPerformanceFrequency( &PerfCounterFrequencyResult );
-						Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
-
-						//TODO: Initialize the COM LIBRARY
-						//TODO: Create a new dialog box to select a file with the extension .PNG
-						//TODO: Get the selected file and then load the PNG Stream
-						if( Window )
+						if( SUCCEEDED(hr) )
 						{
-							LARGE_INTEGER LastCounter = Win_GetWallClock();
-							GlobalRunning = true;
 
+							char PngFilename[ WIN32_FILE_NAME_COUNT ] = {};
 
-							while( GlobalRunning )
+							if( WideCharToMultiByte( CP_UTF8 , WC_DEFAULTCHAR, Filename, -1, PngFilename, WIN32_FILE_NAME_COUNT, NULL, NULL  ) )
 							{
 
-								//TODO: Render/Draw the PNG
-								ProcessPendingMessages();
+								PNG png = {};
+								png.File = CreateFileA( PngFilename,
+													   GENERIC_READ,
+													   FILE_SHARE_READ,
+													   0, 
+													   OPEN_EXISTING, 0, 0);
+								CoTaskMemFree( Filename );
 
-								LARGE_INTEGER WorkCounter = Win_GetWallClock();
-								real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-								real32 SecondsElapsedForFrame = WorkSecondsElapsed;
-								if( SecondsElapsedForFrame < TargetSecondsPerFrame )
+								if( png.File != INVALID_HANDLE_VALUE )
 								{
-									if( SleepIsGranular )
+
+									uint8 FileSignature[8] = {};
+									DWORD BytesRead = 0;
+
+									//NOTE: GET RID OF THIS
+									if( ReadFile( png.File, FileSignature, 8, &BytesRead, 0) )
 									{
-										DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
-										if(SleepMS > 0)
-										{
-											Sleep(SleepMS);
+										if( ValidPNGSignature( FileSignature, 8 ) )
+										{ //NOTE: PNG is valid now render it
+
+											if( RegisterClassA( &WindowClass ) )
+											{
+												HWND Window = CreateWindowExA
+													(
+														0,
+														WindowClass.lpszClassName,
+														"WIN32_APP",
+														WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+														//Size & Position
+														CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+														0,
+														0,
+														instance,
+														0
+												);
+
+												real32 TargetSecondsPerFrame = 1.0f / 60;
+												UINT DesiredSchedulerMS = 1;
+												bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+
+												LARGE_INTEGER PerfCounterFrequencyResult;
+												QueryPerformanceFrequency( &PerfCounterFrequencyResult );
+												Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+
+												if( Window )
+												{
+													LARGE_INTEGER LastCounter = Win_GetWallClock();
+													GlobalRunning = true;
+
+
+													while( GlobalRunning )
+													{
+
+														//TODO: Render/Draw the PNG
+														ProcessPendingMessages();
+
+														LARGE_INTEGER WorkCounter = Win_GetWallClock();
+														real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+														real32 SecondsElapsedForFrame = WorkSecondsElapsed;
+														if( SecondsElapsedForFrame < TargetSecondsPerFrame )
+														{
+															if( SleepIsGranular )
+															{
+																DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
+																if(SleepMS > 0)
+																{
+																	Sleep(SleepMS);
+																}
+															}
+
+															real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+
+															if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+															{
+																//TODO: Log the missed sleep here
+
+															}
+
+															while( SecondsElapsedForFrame < TargetSecondsPerFrame )
+															{
+																SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
+															}
+														}
+														else
+														{
+															//TODO: MISSED FRAME RATE
+															//TODO: Logging
+														}
+														LARGE_INTEGER EndCounter = Win_GetWallClock();
+														LastCounter = EndCounter;
+													}
+												}
+											}
+											else
+											{ //NOTE: Failed to register window class with the OS
+
+											}
 										}
 									}
 
-									real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-
-									if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
-									{
-										//TODO: Log the missed sleep here
-
-									}
-
-									while( SecondsElapsedForFrame < TargetSecondsPerFrame )
-									{
-										SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
-									}
+									CloseHandle( png.File );
 								}
-								else
-								{
-									//TODO: MISSED FRAME RATE
-									//TODO: Logging
-								}
-								LARGE_INTEGER EndCounter = Win_GetWallClock();
-								LastCounter = EndCounter;
 							}
 						}
-					}
-					else
-					{ //NOTE: Failed to register window class with the OS
-
+						pItem->Release();
 					}
 				}
 			}
