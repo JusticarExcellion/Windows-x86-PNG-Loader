@@ -17,6 +17,11 @@
 #define Assert(Expression)
 #endif
 
+#define Kilobytes(value) ((value)*1024LL)
+#define Megabytes(value) (Kilobytes(value)*1024LL)
+#define Gigabytes(value) (Megabytes(value)*1024LL)
+#define Terabytes(value) (Gigabytes(value)*1024LL)
+
 #define ArrayCount(Array) ( sizeof(Array) / sizeof( ( Array )[0] ) )
 #define WIN32_FILE_NAME_COUNT MAX_PATH
 
@@ -44,26 +49,6 @@ global uint8 PNGSignature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A 
 global uint32 CRC_TABLE[256] = {}; //TODO: Could we entirely precompute this at
 //compile time?
 
-#include "PNG.h"
-
-
-//NOTE: This is all for timing and testing purposes
-inline LARGE_INTEGER
-Win_GetWallClock()
-{
-	LARGE_INTEGER Result;
-	QueryPerformanceCounter( &Result );
-	return Result;
-}
-
-inline real32
-Win_GetSecondsElapsed( LARGE_INTEGER Start, LARGE_INTEGER End )
-{
-	real32 Result =  ( (real32)( End.QuadPart - Start.QuadPart ) /
-		(real32)( Global_PerfCounterFrequency ) );
-	return Result;
-}
-
 internal bool32
 New_CompareString( char* String1, int String1Count, char* String2, int String2Count )
 { //NOTE: We Could rework this to look for the Null terminator instead of
@@ -81,6 +66,26 @@ New_CompareString( char* String1, int String1Count, char* String2, int String2Co
 			Result = true;
 		}
 	}
+	return Result;
+}
+
+#include "PNG.h"
+
+
+//NOTE: This is all for timing and testing purposes
+inline LARGE_INTEGER
+Win_GetWallClock()
+{
+	LARGE_INTEGER Result;
+	QueryPerformanceCounter( &Result );
+	return Result;
+}
+
+inline real32
+Win_GetSecondsElapsed( LARGE_INTEGER Start, LARGE_INTEGER End )
+{
+	real32 Result =  ( (real32)( End.QuadPart - Start.QuadPart ) /
+		(real32)( Global_PerfCounterFrequency ) );
 	return Result;
 }
 
@@ -292,6 +297,12 @@ WinMain
 
 	GlobalRunning = true;
 
+	#if PNG_INTERNAL
+		LPVOID BaseAddress = (LPVOID)Terabytes(2);
+	#else
+		LPVOID BaseAddress = 0;
+	#endif
+
 	PNG png = {};
 
 	if( SUCCEEDED(hr) )
@@ -310,229 +321,115 @@ WinMain
 
 				uint8 FileSignature[8] = {};
 				DWORD BytesRead;
+				LARGE_INTEGER FileSize;
+				uint32 Offset = 0;
 
-				//NOTE: GET RID OF THIS
-				if( ReadFile( png.File, FileSignature, 8, &BytesRead, 0) )
+				if( GetFileSizeEx( png.File, &FileSize ) )
 				{
-					if( ValidPNGSignature( FileSignature, 8 ) )
-					{ //NOTE: PNG is valid now load all the
-						//PNG data and render
 
-						//TODO: We can probably pull out
-						//loading the chunks for the png
-						//NOTE: B for BigEndian, L for
-						//little Endian
-						uint32 B_ChunkLength = 0;
-						//NOTE: This is for testing
-						uint32 L_ChunkLength = 0;
-						if( ReadFile( png.File, &B_ChunkLength, 4, &BytesRead, 0 ) )
-						{
-							L_ChunkLength = uint32_BigEndianToLittleEndian( B_ChunkLength );
-						}
+					png.MemorySize = FileSize.QuadPart;
+					png.Memory = VirtualAlloc( BaseAddress, (size_t)png.MemorySize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
 
-						Assert( L_ChunkLength > 0 );
-						Assert( L_ChunkLength < 2147483647 );
-						//NOTE: Chunk Length cannot exceed
-						//2^31 - 1
+					if( png.Memory )
+					{
 
-						char ChunkType[5] = {};
-						if( ReadFile( png.File, &ChunkType, 4, &BytesRead, 0 ) )
-						{
-						}
-						ChunkType[4] = '\0';
-
+						//NOTE: Initial Setup
 						ComputeCRCTable();
 
-						//TODO: This is just bad change this!!!
-						//let's just allocate some small
-						//amount of virtual memory and if
-						//our chunk length is greater than
-						//our current memory size we virtual
-						//free and reallocate as necessary
-						//or we need we can just try to
-						//guess how much memory we might
-						//need by virtual allocating the
-						//size of the png
-						char HeaderChunkData[ 50 ] = {};
-
-						if( New_CompareString( ChunkType, 5, "IHDR\0", 5 ) )
-						{ //Load all header info
-							OutputDebugStringA("PNG HEADER FOUND!!!\nLoading PNG DETAILS!!!\n");
-
-							if( ReadFile( png.File, HeaderChunkData, L_ChunkLength, &BytesRead, 0 ) )
-							{
-								OutputDebugStringA("Chunk Data Read\n");
-							}
-
-							uint32 L_ReadCRC = 0;
-							uint32 B_ReadCRC = 0;
-							if( ReadFile( png.File, &B_ReadCRC, 4, &BytesRead, 0 ) )
-							{
-								L_ReadCRC = uint32_BigEndianToLittleEndian( B_ReadCRC );
-
-								//TODO: Check the CRC to see
-								//if the data is corrupted
-								uint32 CalculatedCRC = CalculateCRC( ChunkType, HeaderChunkData, L_ChunkLength );
-								if( L_ReadCRC != CalculatedCRC )
-								{//NOTE: Data is corrupted 
-									//Error / crash
-									//application
-									OutputDebugStringA("CRC Check Failed - Chunk Data Invalid!!!\n");
-									GlobalRunning = false;
-								}
-								else
-								{
-									OutputDebugStringA("CRC Check Succeeded - Chunk Data Valid!!!\n");
-									png.Header = (PNG_Header*)HeaderChunkData;
-									png.Header->Width = uint32_BigEndianToLittleEndian( png.Header->Width );
-									png.Header->Height = uint32_BigEndianToLittleEndian( png.Header->Height );
-								}
-							}
-
-						}
-
-						if( ReadFile( png.File, &B_ChunkLength, 4, &BytesRead, 0 ) )
+						//NOTE: GET RID OF THIS
+						if( ReadFile( png.File, FileSignature, 8, &BytesRead, 0) )
 						{
-							L_ChunkLength = uint32_BigEndianToLittleEndian( B_ChunkLength );
-						}
+							if( ValidPNGSignature( FileSignature, 8 ) )
+							{ //NOTE: PNG is valid now load all the
+								//PNG data and render
 
-						Assert( L_ChunkLength > 0 );
-						Assert( L_ChunkLength < 2147483647 );
+								//TODO: Need to look through the data and keep
+								//reading until we hit the end chunk
+								ReadChunk( &png, &Offset, &BytesRead );
 
-						if( ReadFile( png.File, &ChunkType, 4, &BytesRead, 0 ) )
-						{
-							ChunkType[4] = '\0';
-							char TextBuffer[256] = {};
-							_snprintf_s( TextBuffer,sizeof(TextBuffer), "Chunk Type %s\n", ChunkType);
-							OutputDebugStringA( TextBuffer );
-						}
-						ChunkType[4] = '\0';
-
-						char PLTEChunkData[ 1000 ] = {};
-						if( New_CompareString( ChunkType, 4, "PLTE", 4 ) )
-						{ //Load all Palette Info
-
-							OutputDebugStringA("PNG Palette Found!!!\nLoading Palette!!!\n");
-
-							if( L_ChunkLength % 3 != 0 )
-							{
-								OutputDebugStringA("ERROR: Palette Chunk Length is not divisible by 3!!!\nExiting!!!\n");
-								GlobalRunning = false;
-							}
-
-							if( ReadFile( png.File, PLTEChunkData, L_ChunkLength, &BytesRead, 0 ) )
-							{
-								OutputDebugStringA("Chunk Data Read\n");
-							}
-
-							uint32 L_ReadCRC = 0;
-							uint32 B_ReadCRC = 0;
-							if( ReadFile( png.File, &B_ReadCRC, 4, &BytesRead, 0 ) )
-							{
-								L_ReadCRC = uint32_BigEndianToLittleEndian( B_ReadCRC );
-
-								//TODO: Check the CRC to see
-								//if the data is corrupted
-								uint32 CalculatedCRC = CalculateCRC( ChunkType, PLTEChunkData, L_ChunkLength );
-								if( L_ReadCRC != CalculatedCRC )
-								{//NOTE: Data is corrupted 
-									//Error / crash
-									//application
-									OutputDebugStringA("CRC Check Failed - Chunk Data Invalid!!!\n");
-									MessageBoxA( NULL, "ERROR: CHUNK DATA INVALID\0", "CRC CHECK FAILED\0",MB_OK | MB_ICONERROR );
-									GlobalRunning = false;
-								}
-								else
+								if( RegisterClassA( &WindowClass ) )
 								{
-									OutputDebugStringA("CRC Check Succeeded - Chunk Data Valid!!!\n");
-									png.Palette = (PNG_Palette*)PLTEChunkData;
-								}
-							}
+									HWND Window = CreateWindowExA
+										(
+											0,
+											WindowClass.lpszClassName,
+											"WIN32_APP",
+											WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+											//Size & Position
+											CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+											0,
+											0,
+											instance,
+											0
+									);
 
-						}
+									real32 TargetSecondsPerFrame = 1.0f / 60;
+									UINT DesiredSchedulerMS = 1;
+									bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
 
+									LARGE_INTEGER PerfCounterFrequencyResult;
+									QueryPerformanceFrequency( &PerfCounterFrequencyResult );
+									Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
 
-						if( RegisterClassA( &WindowClass ) )
-						{
-							HWND Window = CreateWindowExA
-								(
-									0,
-									WindowClass.lpszClassName,
-									"WIN32_APP",
-									WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-									//Size & Position
-									CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-									0,
-									0,
-									instance,
-									0
-							);
-
-							real32 TargetSecondsPerFrame = 1.0f / 60;
-							UINT DesiredSchedulerMS = 1;
-							bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
-
-							LARGE_INTEGER PerfCounterFrequencyResult;
-							QueryPerformanceFrequency( &PerfCounterFrequencyResult );
-							Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
-
-							if( Window )
-							{
-								LARGE_INTEGER LastCounter = Win_GetWallClock();
-
-							while( GlobalRunning )
-								{
-
-									//TODO: Render/Draw the PNG
-									ProcessPendingMessages();
-
-									LARGE_INTEGER WorkCounter = Win_GetWallClock();
-									real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-									real32 SecondsElapsedForFrame = WorkSecondsElapsed;
-									if( SecondsElapsedForFrame < TargetSecondsPerFrame )
+									if( Window )
 									{
-										if( SleepIsGranular )
+										LARGE_INTEGER LastCounter = Win_GetWallClock();
+
+										while( GlobalRunning )
 										{
-											DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
-											if(SleepMS > 0)
+
+											//TODO: Render/Draw the PNG
+											ProcessPendingMessages();
+
+											LARGE_INTEGER WorkCounter = Win_GetWallClock();
+											real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+											real32 SecondsElapsedForFrame = WorkSecondsElapsed;
+											if( SecondsElapsedForFrame < TargetSecondsPerFrame )
 											{
-												Sleep(SleepMS);
+												if( SleepIsGranular )
+												{
+													DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
+													if(SleepMS > 0)
+													{
+														Sleep(SleepMS);
+													}
+												}
+
+												real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+
+												if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+												{
+													//TODO: Log the missed sleep here
+
+												}
+
+												while( SecondsElapsedForFrame < TargetSecondsPerFrame )
+												{
+													SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
+												}
 											}
-										}
-
-										real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-
-										if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
-										{
-											//TODO: Log the missed sleep here
-
-										}
-
-										while( SecondsElapsedForFrame < TargetSecondsPerFrame )
-										{
-											SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
+											else
+											{
+												//TODO: MISSED FRAME RATE
+												//TODO: Logging
+											}
+											LARGE_INTEGER EndCounter = Win_GetWallClock();
+											LastCounter = EndCounter;
 										}
 									}
-									else
-									{
-										//TODO: MISSED FRAME RATE
-										//TODO: Logging
-									}
-									LARGE_INTEGER EndCounter = Win_GetWallClock();
-									LastCounter = EndCounter;
+								}
+								else
+								{ //NOTE: Failed to register window class with the OS
+
 								}
 							}
 						}
-						else
-						{ //NOTE: Failed to register window class with the OS
-
-						}
+						CloseHandle( png.File );
+						VirtualFree( png.Memory, 0, MEM_RELEASE );
 					}
 				}
-
-				CloseHandle( png.File );
 			}
 		}
 	}

@@ -30,6 +30,8 @@ typedef struct PNG
 	HANDLE File;
 	PNG_Header* Header;
 	PNG_Palette* Palette;
+	void* Memory;
+	int64 MemorySize;
 }PNG;
 
 internal bool32
@@ -110,9 +112,114 @@ CalculateCRC( char* chunkType, char* buffer, int bufferLen )
 	return UpdateCRC(0xFFFFFFFFL, chunkType , buffer, bufferLen ) ^ 0xFFFFFFFFL;
 }
 
-internal bool
-ReadChunk( )
+internal bool32
+HandlePNGChunkData( PNG* png, uint32* offset, char* ChunkType )
 {
+	bool32 Result = false;
+	if( New_CompareString( "IHDR", 4, ChunkType, 4 ) )
+	{
+		OutputDebugStringA("Image Header Found!!!\n");
+		png->Header = (PNG_Header*)png->Memory + *offset;
+		png->Header->Width = uint32_BigEndianToLittleEndian( png->Header->Width );
+		png->Header->Height = uint32_BigEndianToLittleEndian( png->Header->Height );
+		Result = true;
+	}
+
+	if( New_CompareString( "PLTE", 4, ChunkType, 4 ) )
+	{
+		OutputDebugStringA("Image Palette Found!!!\n");
+		Result = true;
+	}
+
+	if( New_CompareString( "IDAT", 4, ChunkType, 4 ) )
+	{
+		OutputDebugStringA("Image Data Found!!!\n");
+		Result = true;
+	}
+
+	if( New_CompareString( "IEND", 4, ChunkType, 4 ) )
+	{
+		OutputDebugStringA("End of Image!!!\n");
+		Result = true;
+	}
+	else
+	{
+		Result = true;
+	}
+
+	return Result;
 }
+
+internal bool32
+ReadChunk( PNG* png, uint32 *offset, DWORD* BytesRead )
+{
+	bool32 Result = false;
+	uint32 B_ChunkLength = 0;
+	uint32 L_ChunkLength = 0;
+
+	Assert( *offset < png->MemorySize ); //NOTE: Asserting we never are writing
+	//into memory that was not virtual allocated
+	
+	if( ReadFile( png->File, &B_ChunkLength, 4, BytesRead, 0 ) )
+	{
+		L_ChunkLength = uint32_BigEndianToLittleEndian( B_ChunkLength );
+
+		Assert( L_ChunkLength > 0 );
+		Assert( L_ChunkLength < 2147483647 );
+		Assert( (*offset + L_ChunkLength) < png->MemorySize ); // NOTE: Ensures that we never write to unallocated memory
+
+		char ChunkType[5] = {};
+		ChunkType[4] = '\0';
+		if( ReadFile( png->File, &ChunkType, 4, BytesRead, 0 ) )
+		{
+			char TextBuffer[256] = {};
+			_snprintf_s( TextBuffer,sizeof(TextBuffer), "Chunk Type %s\n", ChunkType);
+			OutputDebugStringA( TextBuffer );
+
+			if( ReadFile( png->File, ( (char*)png->Memory + *offset ), L_ChunkLength, BytesRead, 0 ) )
+			{
+				OutputDebugStringA("Chunk Data Read\n");
+
+				uint32 L_ReadCRC = 0;
+				uint32 B_ReadCRC = 0;
+				if( ReadFile( png->File, &B_ReadCRC, 4, BytesRead, 0 ) )
+				{
+					L_ReadCRC = uint32_BigEndianToLittleEndian( B_ReadCRC );
+
+					uint32 CalculatedCRC = CalculateCRC( ChunkType, ( (char*)png->Memory + *offset), L_ChunkLength );
+					if( L_ReadCRC != CalculatedCRC )
+					{//NOTE: Data is corrupted 
+						//Error / crash
+						//application
+						OutputDebugStringA("CRC Check Failed - Chunk Data Invalid!!!\n");
+					}
+					else
+					{
+						OutputDebugStringA("CRC Check Succeeded - Chunk Data Valid!!!\n");
+						Result = HandlePNGChunkData( png, offset, ChunkType );
+					}
+				}
+			}
+			else
+			{
+				//TODO: Log Fail
+			}
+
+		}
+		else
+		{
+			//TODO: Log Fail
+		}
+
+		*offset += L_ChunkLength;
+	}
+	else
+	{
+		//TODO: Log Fail
+	}
+
+	return Result;
+}
+
 
 #endif
