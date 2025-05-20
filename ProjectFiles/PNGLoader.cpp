@@ -1,3 +1,10 @@
+/*******************************************************************
+* Title: PNG Loader
+* Author: Xander Bruce
+* Date: 5-19-2025
+* Desc: Loads a PNG on the Windows Platform, that's it
+********************************************************************/
+
 #include <stdint.h>
 #include <windows.h>
 #include <ShObjIdl.h>
@@ -26,13 +33,18 @@ typedef float real32;
 typedef double real64;
 
 typedef int32 bool32;
+
 #define internal static
 #define global static
 
-#include "PNG.h"
-
 global int64 Global_PerfCounterFrequency;
 global bool GlobalRunning;
+global uint8 PNGSignature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+global uint32 CRC_TABLE[256] = {}; //TODO: Could we entirely precompute this at
+//compile time?
+
+#include "PNG.h"
+
 
 //NOTE: This is all for timing and testing purposes
 inline LARGE_INTEGER
@@ -48,6 +60,26 @@ Win_GetSecondsElapsed( LARGE_INTEGER Start, LARGE_INTEGER End )
 {
 	real32 Result =  ( (real32)( End.QuadPart - Start.QuadPart ) /
 		(real32)( Global_PerfCounterFrequency ) );
+	return Result;
+}
+
+internal bool32
+New_CompareString( char* String1, int String1Count, char* String2, int String2Count )
+{ //NOTE: We Could rework this to look for the Null terminator instead of
+	//relying on the string count and we can say that if one string is longer
+	//than the other we just return false automatically
+	bool32 Result = false;
+	for( int i = 0; i < String1Count && i < String2Count; i++ )
+	{
+		if( String1[i] != String2[i] )
+		{
+			break;
+		}
+		else if( ( i == ( String1Count - 1 ) ) && ( i == (String2Count - 1) ) )
+		{
+			Result = true;
+		}
+	}
 	return Result;
 }
 
@@ -212,6 +244,8 @@ WinMain
 
 	HRESULT hr = CoInitializeEx( NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE );
 
+	GlobalRunning = true;
+
 	if( SUCCEEDED(hr) )
 	{
 
@@ -256,13 +290,82 @@ WinMain
 								{
 
 									uint8 FileSignature[8] = {};
-									DWORD BytesRead = 0;
+									DWORD BytesRead;
 
 									//NOTE: GET RID OF THIS
 									if( ReadFile( png.File, FileSignature, 8, &BytesRead, 0) )
 									{
 										if( ValidPNGSignature( FileSignature, 8 ) )
-										{ //NOTE: PNG is valid now render it
+										{ //NOTE: PNG is valid now load all the
+											//PNG data and render
+
+											//TODO: We can probably pull out
+											//loading the chunks for the png
+											//NOTE: B for BigEndian, L for
+											//little Endian
+											uint32 B_ChunkLength = 0;
+											//NOTE: This is for testing
+											uint32 L_ChunkLength = 0;
+											if( ReadFile( png.File, &B_ChunkLength, 4, &BytesRead, 0 ) )
+											{
+												L_ChunkLength = uint32_BigEndianToLittleEndian( B_ChunkLength );
+											}
+
+											Assert( L_ChunkLength > 0 );
+											Assert( L_ChunkLength < 2147483647 );
+											//NOTE: Chunk Length cannot exceed
+											//2^31 - 1
+
+											char ChunkType[5] = {};
+											if( ReadFile( png.File, &ChunkType, 4, &BytesRead, 0 ) )
+											{
+											}
+											ChunkType[4] = '\0';
+
+											ComputeCRCTable();
+
+											//TODO: This is just bad change this!!!
+											//let's just allocate some small
+											//amount of virtual memory and if
+											//our chunk length is greater than
+											//our current memory size we virtual
+											//free and reallocate as necessary
+											//or we need we can just try to
+											//guess how much memory we might
+											//need by virtual allocating the
+											//size of the png
+											char ChunkData[ 1000 ] = {};
+
+											if( New_CompareString( ChunkType, 5, "IHDR\0", 5 ) )
+											{ //Load all header info
+												OutputDebugStringA("PNG HEADER FOUND!!!\nLoading PNG DETAILS!!!\n");
+
+												if( ReadFile( png.File, ChunkData, L_ChunkLength, &BytesRead, 0 ) )
+												{
+													png.Header = (PNG_Header*)ChunkData;
+													png.Header->Width = uint32_BigEndianToLittleEndian( png.Header->Width );
+													png.Header->Height = uint32_BigEndianToLittleEndian( png.Header->Height );
+												}
+
+												uint32 L_ReadCRC = 0;
+												uint32 B_ReadCRC = 0;
+												if( ReadFile( png.File, &B_ReadCRC, 4, &BytesRead, 0 ) )
+												{
+													L_ReadCRC = uint32_BigEndianToLittleEndian( B_ReadCRC );
+
+													//TODO: Check the CRC to see
+													//if the data is corrupted
+													OutputDebugStringA("CRC\n");
+													uint32 CalculatedCRC = CalculateCRC( ChunkType, ChunkData, L_ChunkLength );
+													if( L_ReadCRC != CalculatedCRC )
+													{//NOTE: Data is corrupted 
+														//Error / crash
+														//application
+														GlobalRunning = false;
+													}
+												}
+
+											}
 
 											if( RegisterClassA( &WindowClass ) )
 											{
@@ -291,8 +394,6 @@ WinMain
 												if( Window )
 												{
 													LARGE_INTEGER LastCounter = Win_GetWallClock();
-													GlobalRunning = true;
-
 
 													while( GlobalRunning )
 													{
