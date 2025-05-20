@@ -1,6 +1,13 @@
 #ifndef PNG_H
 #define PNG_H
 
+typedef struct Color
+{
+	char Red;
+	char Green;
+	char Blue;
+} Color;
+
 typedef struct PNG_Header
 {
 	uint32 Width;
@@ -12,10 +19,17 @@ typedef struct PNG_Header
 	char InterlaceMethod;
 }PNG_Header;
 
+typedef struct PNG_Palette
+{
+	Color Colors[256];
+}PNG_Palette;
+
 typedef struct PNG
 {
+	char FileName[ WIN32_FILE_NAME_COUNT ];
 	HANDLE File;
 	PNG_Header* Header;
+	PNG_Palette* Palette;
 }PNG;
 
 internal bool32
@@ -60,7 +74,7 @@ ComputeCRCTable()
 		{
 			if( c & 1 )
 			{
-				c = 0xedb88320L ^ ( c >> 1 );
+				c = 0xEDB88320L ^ ( c >> 1 );
 			}
 			else
 			{
@@ -94,6 +108,11 @@ internal uint32
 CalculateCRC( char* chunkType, char* buffer, int bufferLen )
 {
 	return UpdateCRC(0xFFFFFFFFL, chunkType , buffer, bufferLen ) ^ 0xFFFFFFFFL;
+}
+
+internal bool
+ReadChunk( )
+{
 }
 
 #endif
