@@ -69,6 +69,34 @@ New_CompareString( char* String1, int String1Count, char* String2, int String2Co
 	return Result;
 }
 
+internal bool32
+CopyString( char* CopyStr, int CpStrLen, char* Dest, int DstLen )
+{   //NOTE: Does not assume that either string is terminated with a null
+	//character or that they are even the same length
+	bool32 Valid = false;
+	if( DstLen >= CpStrLen && CpStrLen > 0 ) Valid = true;
+	int index = 0;
+	while( ( index < CpStrLen ) && ( index < DstLen ) && Valid )
+	{
+		*Dest++ = *CopyStr++;
+		index++;
+	}
+	*Dest++ = 0;
+	return Valid;
+}
+
+inline uint32
+StringLength( char* String )
+{   //NOTE: Assumes the string being given is null terminated
+	uint32 Count = 0;
+	while( *String++ )
+	{
+		Count++;
+	}
+
+	return Count;
+}
+
 #include "PNG.h"
 
 
@@ -307,6 +335,10 @@ WinMain
 
 	if( SUCCEEDED(hr) )
 	{
+
+		ComputeCRCTable();
+
+		//Establish a while loop here so we can continuously open new png files
 		if( GetPNGFile( &png ) )
 		{
 
@@ -332,11 +364,7 @@ WinMain
 
 					if( png.Memory )
 					{
-
 						//NOTE: Initial Setup
-						ComputeCRCTable();
-
-						//NOTE: GET RID OF THIS
 						if( ReadFile( png.File, FileSignature, 8, &BytesRead, 0) )
 						{
 							if( ValidPNGSignature( FileSignature, 8 ) )
@@ -345,84 +373,88 @@ WinMain
 
 								//TODO: Need to look through the data and keep
 								//reading until we hit the end chunk
-								ReadChunk( &png, &Offset, &BytesRead );
+								while( ReadChunk( &png, &Offset, &BytesRead ) ){}
 
-								if( RegisterClassA( &WindowClass ) )
+								if( ValidatePNG( &png ) )
 								{
-									HWND Window = CreateWindowExA
-										(
-											0,
-											WindowClass.lpszClassName,
-											"WIN32_APP",
-											WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-											//Size & Position
-											CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-											0,
-											0,
-											instance,
-											0
-									);
 
-									real32 TargetSecondsPerFrame = 1.0f / 60;
-									UINT DesiredSchedulerMS = 1;
-									bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
-
-									LARGE_INTEGER PerfCounterFrequencyResult;
-									QueryPerformanceFrequency( &PerfCounterFrequencyResult );
-									Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
-
-									if( Window )
+									if( RegisterClassA( &WindowClass ) )
 									{
-										LARGE_INTEGER LastCounter = Win_GetWallClock();
+										HWND Window = CreateWindowExA
+											(
+												0,
+												WindowClass.lpszClassName,
+												"WIN32_APP",
+												WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+												//Size & Position
+												CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+												0,
+												0,
+												instance,
+												0
+										);
 
-										while( GlobalRunning )
+										real32 TargetSecondsPerFrame = 1.0f / 60;
+										UINT DesiredSchedulerMS = 1;
+										bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+
+										LARGE_INTEGER PerfCounterFrequencyResult;
+										QueryPerformanceFrequency( &PerfCounterFrequencyResult );
+										Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+
+										if( Window )
 										{
+											LARGE_INTEGER LastCounter = Win_GetWallClock();
 
-											//TODO: Render/Draw the PNG
-											ProcessPendingMessages();
-
-											LARGE_INTEGER WorkCounter = Win_GetWallClock();
-											real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-											real32 SecondsElapsedForFrame = WorkSecondsElapsed;
-											if( SecondsElapsedForFrame < TargetSecondsPerFrame )
+											while( GlobalRunning )
 											{
-												if( SleepIsGranular )
+
+												//TODO: Render/Draw the PNG
+												ProcessPendingMessages();
+
+												LARGE_INTEGER WorkCounter = Win_GetWallClock();
+												real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+												real32 SecondsElapsedForFrame = WorkSecondsElapsed;
+												if( SecondsElapsedForFrame < TargetSecondsPerFrame )
 												{
-													DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
-													if(SleepMS > 0)
+													if( SleepIsGranular )
 													{
-														Sleep(SleepMS);
+														DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
+														if(SleepMS > 0)
+														{
+															Sleep(SleepMS);
+														}
+													}
+
+													real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+
+													if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+													{
+														//TODO: Log the missed sleep here
+
+													}
+
+													while( SecondsElapsedForFrame < TargetSecondsPerFrame )
+													{
+														SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
 													}
 												}
-
-												real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-
-												if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+												else
 												{
-													//TODO: Log the missed sleep here
-
+													//TODO: MISSED FRAME RATE
+													//TODO: Logging
 												}
-
-												while( SecondsElapsedForFrame < TargetSecondsPerFrame )
-												{
-													SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
-												}
+												LARGE_INTEGER EndCounter = Win_GetWallClock();
+												LastCounter = EndCounter;
 											}
-											else
-											{
-												//TODO: MISSED FRAME RATE
-												//TODO: Logging
-											}
-											LARGE_INTEGER EndCounter = Win_GetWallClock();
-											LastCounter = EndCounter;
 										}
 									}
-								}
-								else
-								{ //NOTE: Failed to register window class with the OS
+									else
+									{ //NOTE: Failed to register window class with the OS
 
+									}
 								}
 							}
 						}

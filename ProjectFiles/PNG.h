@@ -24,14 +24,26 @@ typedef struct PNG_Palette
 	Color Colors[256];
 }PNG_Palette;
 
+typedef struct ICCProfile
+{
+	char   ProfileName[80];
+	uint8  ProfileNameLength;
+	char CompressionMethod;
+	uint32 CompressedProfileLength;
+	char*  CompressedProfile;
+} ICCProfile;
+
 typedef struct PNG
 {
-	char FileName[ WIN32_FILE_NAME_COUNT ];
+	int64 MemorySize;
+	uint32 ImageDataLength;
 	HANDLE File;
 	PNG_Header* Header;
 	PNG_Palette* Palette;
+	ICCProfile ICCProfile;
+	char  FileName[ WIN32_FILE_NAME_COUNT ];
+	char* ImageData;
 	void* Memory;
-	int64 MemorySize;
 }PNG;
 
 internal bool32
@@ -55,6 +67,27 @@ ValidPNGSignature( uint8 *Signature, int SignatureCount )
 				index++;
 		}
 		return valid;
+}
+
+internal bool32
+GetICCProfile( PNG* png, uint32* offset, uint32 ChunkLength )
+{
+	bool32 Valid = false;
+	png->ICCProfile.ProfileNameLength = (uint8)StringLength( ( (char*)png->Memory + *offset ) );
+	if( png->ICCProfile.ProfileNameLength < 80 )
+	{
+		Valid = true;
+	}
+	CopyString( ( (char*)png->Memory + *offset ), png->ICCProfile.ProfileNameLength, png->ICCProfile.ProfileName, 79 );
+
+	//NOTE: This is horribly ugly but the only way I can think of to get the
+	//compression method, we add one byte onto the name length to add the null
+	//terminator
+	png->ICCProfile.CompressionMethod = ( (char*)png->Memory + (*offset + (png->ICCProfile.ProfileNameLength + 1) ) )[0];
+	//NOTE: The 2 bytes are the null terminator of the string and the compression method
+	png->ICCProfile.CompressedProfileLength = ( ChunkLength - ( png->ICCProfile.ProfileNameLength + 2 ) );
+	png->ICCProfile.CompressedProfile = (char*)png->Memory + (*offset + png->ICCProfile.ProfileNameLength+2 );
+	return Valid;
 }
 
 inline uint32
@@ -113,13 +146,13 @@ CalculateCRC( char* chunkType, char* buffer, int bufferLen )
 }
 
 internal bool32
-HandlePNGChunkData( PNG* png, uint32* offset, char* ChunkType )
+HandlePNGChunkData( PNG* png, uint32* offset, char* ChunkType, uint32 ChunkLength )
 {
 	bool32 Result = false;
 	if( New_CompareString( "IHDR", 4, ChunkType, 4 ) )
 	{
 		OutputDebugStringA("Image Header Found!!!\n");
-		png->Header = (PNG_Header*)png->Memory + *offset;
+		png->Header = (PNG_Header*)( (char*)png->Memory + *offset );
 		png->Header->Width = uint32_BigEndianToLittleEndian( png->Header->Width );
 		png->Header->Height = uint32_BigEndianToLittleEndian( png->Header->Height );
 		Result = true;
@@ -131,8 +164,24 @@ HandlePNGChunkData( PNG* png, uint32* offset, char* ChunkType )
 		Result = true;
 	}
 
+	if( New_CompareString( "iCCP", 4, ChunkType, 4 ) )
+	{
+		OutputDebugStringA("Embedded ICC Profile Found!!!\n");
+
+		if( GetICCProfile( png, offset, ChunkLength ) )
+		{
+			Result = true;
+		}
+	}
+
 	if( New_CompareString( "IDAT", 4, ChunkType, 4 ) )
 	{
+		if( png->ImageData == NULL )
+		{
+			png->ImageData = (char*)png->Memory + *offset;
+		}
+		png->ImageDataLength += ChunkLength;
+
 		OutputDebugStringA("Image Data Found!!!\n");
 		Result = true;
 	}
@@ -140,7 +189,7 @@ HandlePNGChunkData( PNG* png, uint32* offset, char* ChunkType )
 	if( New_CompareString( "IEND", 4, ChunkType, 4 ) )
 	{
 		OutputDebugStringA("End of Image!!!\n");
-		Result = true;
+		Result = false;
 	}
 	else
 	{
@@ -164,7 +213,6 @@ ReadChunk( PNG* png, uint32 *offset, DWORD* BytesRead )
 	{
 		L_ChunkLength = uint32_BigEndianToLittleEndian( B_ChunkLength );
 
-		Assert( L_ChunkLength > 0 );
 		Assert( L_ChunkLength < 2147483647 );
 		Assert( (*offset + L_ChunkLength) < png->MemorySize ); // NOTE: Ensures that we never write to unallocated memory
 
@@ -196,7 +244,7 @@ ReadChunk( PNG* png, uint32 *offset, DWORD* BytesRead )
 					else
 					{
 						OutputDebugStringA("CRC Check Succeeded - Chunk Data Valid!!!\n");
-						Result = HandlePNGChunkData( png, offset, ChunkType );
+						Result = HandlePNGChunkData( png, offset, ChunkType, L_ChunkLength );
 					}
 				}
 			}
@@ -219,6 +267,39 @@ ReadChunk( PNG* png, uint32 *offset, DWORD* BytesRead )
 	}
 
 	return Result;
+}
+
+internal bool32
+ValidatePNG( PNG* png )
+{
+	bool32 Valid = true;
+
+	if( png->MemorySize < 1)
+	{
+		Valid = false;
+	}
+
+	if( png->ImageDataLength < 1)
+	{
+		Valid = false;
+	}
+
+	if( png->Header == NULL )
+	{
+		Valid = false;
+	}
+
+	if( png->ImageData == NULL )
+	{
+		Valid = false;
+	}
+
+	if( png->Memory == NULL )
+	{
+		Valid = false;
+	}
+
+	return Valid;
 }
 
 
