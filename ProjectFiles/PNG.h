@@ -284,6 +284,23 @@ ValidatePNG( PNG* png )
 		Valid = false;
 	}
 
+	uint8 BitDepth = (uint8)png->Header->BitDepth;
+	switch( png->Header->ColorType )
+	{
+		case 2:
+			Valid = (BitDepth == 8 || BitDepth == 16);
+		break;
+		case 3:
+			Valid = (BitDepth == 1 || BitDepth == 2 || BitDepth == 4 || BitDepth == 8);
+		break;
+		case 4:
+			Valid = (BitDepth == 8 || BitDepth == 16);
+		break;
+		case 6:
+			Valid = (BitDepth == 8 || BitDepth == 16);
+		break;
+	}
+
 	if( png->Header == NULL )
 	{
 		Valid = false;
@@ -301,6 +318,4 @@ ValidatePNG( PNG* png )
 
 	return Valid;
 }
-
-
 #endif

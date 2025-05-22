@@ -49,56 +49,13 @@ global uint8 PNGSignature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A 
 global uint32 CRC_TABLE[256] = {}; //TODO: Could we entirely precompute this at
 //compile time?
 
-internal bool32
-New_CompareString( char* String1, int String1Count, char* String2, int String2Count )
-{ //NOTE: We Could rework this to look for the Null terminator instead of
-	//relying on the string count and we can say that if one string is longer
-	//than the other we just return false automatically
-	bool32 Result = false;
-	for( int i = 0; i < String1Count && i < String2Count; i++ )
-	{
-		if( String1[i] != String2[i] )
-		{
-			break;
-		}
-		else if( ( i == ( String1Count - 1 ) ) && ( i == (String2Count - 1) ) )
-		{
-			Result = true;
-		}
-	}
-	return Result;
-}
-
-internal bool32
-CopyString( char* CopyStr, int CpStrLen, char* Dest, int DstLen )
-{   //NOTE: Does not assume that either string is terminated with a null
-	//character or that they are even the same length
-	bool32 Valid = false;
-	if( DstLen >= CpStrLen && CpStrLen > 0 ) Valid = true;
-	int index = 0;
-	while( ( index < CpStrLen ) && ( index < DstLen ) && Valid )
-	{
-		*Dest++ = *CopyStr++;
-		index++;
-	}
-	*Dest++ = 0;
-	return Valid;
-}
-
-inline uint32
-StringLength( char* String )
-{   //NOTE: Assumes the string being given is null terminated
-	uint32 Count = 0;
-	while( *String++ )
-	{
-		Count++;
-	}
-
-	return Count;
-}
-
+#include "Decompression.h"
+#include "StringUtils.h"
 #include "PNG.h"
 
+typedef struct OffscreenBuffer
+{
+}OffscreenBuffer;
 
 //NOTE: This is all for timing and testing purposes
 inline LARGE_INTEGER
@@ -200,7 +157,6 @@ WindowsCallback(  HWND Window,
 		{
 			//TODO: Handle this by logging it as an error
 			GlobalRunning = false;
-
 		}break;
 
 		case WM_SYSKEYDOWN:
@@ -223,48 +179,38 @@ WindowsCallback(  HWND Window,
 				//values
 			bool32 wasDown = ( (LParam & (1 << 30) ) != 0 );
 			bool32 isDown = ((LParam & (1 << 31)) == 0);
-			if(wasDown != isDown){
-				if(VKCode == 'W'){
+			if(wasDown != isDown)
+				{
+					if(VKCode == 'W'){
+					}
+					else if(VKCode == 'A'){
+					}
+					else if(VKCode == 'S'){
+					}
+					else if(VKCode == 'D'){
+					}
+					else if(VKCode == 'Q'){
+					}
+					else if(VKCode == 'E'){
+					}
+					else if(VKCode == VK_UP){
+					}
+					else if(VKCode == VK_DOWN){
+					}
+					else if(VKCode == VK_RIGHT){
+					}
+					else if(VKCode == VK_LEFT){
+					}
+					else if(VKCode == VK_ESCAPE){
+					}
+					else if(VKCode == VK_SPACE){
+					}
 				}
-				else if(VKCode == 'A'){
-
-				}
-				else if(VKCode == 'S'){
-
-				}
-				else if(VKCode == 'D'){
-
-				}
-				else if(VKCode == 'Q'){
-
-				}
-				else if(VKCode == 'E'){
-
-				}
-				else if(VKCode == VK_UP){
-
-				}
-				else if(VKCode == VK_DOWN){
-
-				}
-				else if(VKCode == VK_RIGHT){
-
-				}
-				else if(VKCode == VK_LEFT){
-
-				}
-				else if(VKCode == VK_ESCAPE){
-				}
-				else if(VKCode == VK_SPACE){
-				}
-			}
 
 			bool32 AltKeyDown = (LParam & (1 << 29));
 
-			if((VKCode == VK_F4) && AltKeyDown){
-
+			if( (VKCode == VK_F4) && AltKeyDown){
 				GlobalRunning = false;
-
 			}
 
 			if(VKCode == VK_F4){
@@ -277,21 +223,16 @@ WindowsCallback(  HWND Window,
 		{
 			//TODO: Hanlde this as a message or popup for the user
 			GlobalRunning = false;
-
 		}break;
 
 		case WM_PAINT:
 		{
-
 		    //NOTE: This is where we are going to Draw the PNG
-
 			PAINTSTRUCT paint;
-
 			//NOTE: Solid Fill Window
 			HDC hdc  = BeginPaint( Window, &paint );
-			FillRect( hdc, &paint.rcPaint, (HBRUSH)(COLOR_WINDOW + 1) );
+			FillRect(hdc, &paint.rcPaint, (HBRUSH)(COLOR_WINDOW + 1) );
 			EndPaint(Window, &paint);
-
 		}break;
 
 		default:
@@ -335,9 +276,7 @@ WinMain
 
 	if( SUCCEEDED(hr) )
 	{
-
 		ComputeCRCTable();
-
 		//Establish a while loop here so we can continuously open new png files
 		if( GetPNGFile( &png ) )
 		{
@@ -345,7 +284,7 @@ WinMain
 			png.File = CreateFileA( png.FileName,
 						  GENERIC_READ,
 						  FILE_SHARE_READ,
-						  0, 
+						  0,
 						  OPEN_EXISTING, 0, 0);
 
 			if( png.File != INVALID_HANDLE_VALUE )
@@ -364,20 +303,15 @@ WinMain
 
 					if( png.Memory )
 					{
-						//NOTE: Initial Setup
 						if( ReadFile( png.File, FileSignature, 8, &BytesRead, 0) )
 						{
 							if( ValidPNGSignature( FileSignature, 8 ) )
-							{ //NOTE: PNG is valid now load all the
-								//PNG data and render
-
-								//TODO: Need to look through the data and keep
-								//reading until we hit the end chunk
+							{
+								//NOTE: Read PNG Data
 								while( ReadChunk( &png, &Offset, &BytesRead ) ){}
 
 								if( ValidatePNG( &png ) )
 								{
-
 									if( RegisterClassA( &WindowClass ) )
 									{
 										HWND Window = CreateWindowExA
