@@ -45,17 +45,17 @@ typedef int32 bool32;
 
 global int64 Global_PerfCounterFrequency;
 global bool GlobalRunning;
-global uint8 PNGSignature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
 global uint32 CRC_TABLE[256] = {}; //TODO: Could we entirely precompute this at
 //compile time?
 
-#include "Decompression.h"
 #include "StringUtils.h"
 #include "PNG.h"
 
-typedef struct OffscreenBuffer
+inline uint32
+SwapEndianess( uint32 value )
 {
-}OffscreenBuffer;
+	return (uint32)( ( value & 0x000000FFL ) << 24 | ( value & 0x0000FF00L ) << 8 | ( value & 0x00FF0000L ) >> 8 | ( value & 0xFF000000L ) >> 24);
+}
 
 //NOTE: This is all for timing and testing purposes
 inline LARGE_INTEGER
@@ -96,7 +96,7 @@ ProcessPendingMessages()
 }
 
 internal bool32
-GetPNGFile( PNG *png )
+GetPNGFile( char* PNG_Filename )
 {
 	bool32 Valid = false;
 	HRESULT hr;
@@ -123,7 +123,7 @@ GetPNGFile( PNG *png )
 					hr = pItem->GetDisplayName( SIGDN_FILESYSPATH, &Filename );
 					if( SUCCEEDED(hr) )
 					{
-						if( WideCharToMultiByte( CP_UTF8 , WC_DEFAULTCHAR, Filename, -1, png->FileName, WIN32_FILE_NAME_COUNT, NULL, NULL  ) )
+						if( WideCharToMultiByte( CP_UTF8 , WC_DEFAULTCHAR, Filename, -1, PNG_Filename, WIN32_FILE_NAME_COUNT, NULL, NULL  ) )
 						{
 							Valid = true;
 						}
@@ -267,135 +267,187 @@ WinMain
 	GlobalRunning = true;
 
 	#if PNG_INTERNAL
-		LPVOID BaseAddress = (LPVOID)Terabytes(2);
-	#else
-		LPVOID BaseAddress = 0;
-	#endif
+	LPVOID BaseAddress = (LPVOID)Terabytes(2);
+#else
+	LPVOID BaseAddress = 0;
+#endif
 
-	PNG png = {};
+	HANDLE File = NULL;
+	char Filename[ WIN32_FILE_NAME_COUNT ];
+	void* FileMemory = NULL;
 
 	if( SUCCEEDED(hr) )
 	{
 		ComputeCRCTable();
 		//Establish a while loop here so we can continuously open new png files
-		if( GetPNGFile( &png ) )
+		if( GetPNGFile( Filename ) )
 		{
 
-			png.File = CreateFileA( png.FileName,
-						  GENERIC_READ,
-						  FILE_SHARE_READ,
-						  0,
-						  OPEN_EXISTING, 0, 0);
+			File = CreateFileA( Filename,
+					  GENERIC_READ,
+					  FILE_SHARE_READ,
+					  0,
+					  OPEN_EXISTING, 0, 0);
 
-			if( png.File != INVALID_HANDLE_VALUE )
+			if( File != INVALID_HANDLE_VALUE )
 			{
 
-				uint8 FileSignature[8] = {};
+				PNG_Signature* Signature = NULL;
 				DWORD BytesRead;
 				LARGE_INTEGER FileSize;
 				uint32 Offset = 0;
 
-				if( GetFileSizeEx( png.File, &FileSize ) )
+				if( GetFileSizeEx( File, &FileSize ) )
 				{
+					FileMemory = VirtualAlloc( BaseAddress, (size_t)FileSize.QuadPart, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
 
-					png.MemorySize = FileSize.QuadPart;
-					png.Memory = VirtualAlloc( BaseAddress, (size_t)png.MemorySize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
-
-					if( png.Memory )
+					if( FileMemory )
 					{
-						if( ReadFile( png.File, FileSignature, 8, &BytesRead, 0) )
+						if( ReadFile( File, FileMemory, FileSize.LowPart, &BytesRead, 0 ) )
 						{
-							if( ValidPNGSignature( FileSignature, 8 ) )
+							Signature = (PNG_Signature*)FileMemory;
+							Offset += sizeof( PNG_Signature );
+							if( ValidPNGSignature( Signature ) )
 							{
-								//NOTE: Read PNG Data
-								while( ReadChunk( &png, &Offset, &BytesRead ) ){}
+								PNG_Header* Header = NULL;
+								uint8* UncompressedPixels = NULL;
+								while( Offset < FileSize.QuadPart )
+								{ //Loading All of the data
 
-								if( ValidatePNG( &png ) )
-								{
-									if( RegisterClassA( &WindowClass ) )
-									{
-										HWND Window = CreateWindowExA
-											(
-												0,
-												WindowClass.lpszClassName,
-												"WIN32_APP",
-												WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-												//Size & Position
-												CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-												0,
-												0,
-												instance,
-												0
-										);
+									PNG_ChunkHeader* CHeader = (PNG_ChunkHeader*)((char*)FileMemory + Offset);
 
-										real32 TargetSecondsPerFrame = 1.0f / 60;
-										UINT DesiredSchedulerMS = 1;
-										bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+									CHeader->Length = SwapEndianess( CHeader->Length );
+									Assert( CHeader->Length < 2147483647 );
+									Assert( (Offset + CHeader->Length) < FileSize.QuadPart ); // NOTE: Ensures that we never write to unallocated memory
 
-										LARGE_INTEGER PerfCounterFrequencyResult;
-										QueryPerformanceFrequency( &PerfCounterFrequencyResult );
-										Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+									char TextBuffer[256] = {};
+									_snprintf_s( TextBuffer,sizeof(TextBuffer), "Chunk Type %c%c%c%c\n", CHeader->Type[0],CHeader->Type[1],CHeader->Type[2],CHeader->Type[3] );
+									OutputDebugStringA( TextBuffer );
 
-										if( Window )
-										{
-											LARGE_INTEGER LastCounter = Win_GetWallClock();
+									PNG_ChunkFooter* CFooter = (PNG_ChunkFooter*)((char*)FileMemory + Offset + ( sizeof(PNG_ChunkHeader) + CHeader->Length ) );
+									CFooter->CRC = SwapEndianess( CFooter->CRC );
 
-											while( GlobalRunning )
-											{
-
-												//TODO: Render/Draw the PNG
-												ProcessPendingMessages();
-
-												LARGE_INTEGER WorkCounter = Win_GetWallClock();
-												real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-												real32 SecondsElapsedForFrame = WorkSecondsElapsed;
-												if( SecondsElapsedForFrame < TargetSecondsPerFrame )
-												{
-													if( SleepIsGranular )
-													{
-														DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
-														if(SleepMS > 0)
-														{
-															Sleep(SleepMS);
-														}
-													}
-
-													real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-
-													if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
-													{
-														//TODO: Log the missed sleep here
-
-													}
-
-													while( SecondsElapsedForFrame < TargetSecondsPerFrame )
-													{
-														SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
-													}
-												}
-												else
-												{
-													//TODO: MISSED FRAME RATE
-													//TODO: Logging
-												}
-												LARGE_INTEGER EndCounter = Win_GetWallClock();
-												LastCounter = EndCounter;
-											}
-										}
+									uint32 CalculatedCRC = CalculateCRC( ( (char*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) ), CHeader );
+									if( CFooter->CRC != CalculatedCRC )
+									{//NOTE: Data is corrupted
+										//Error / crash
+										//application
+										OutputDebugStringA("CRC Check Failed - Chunk Data Invalid!!!\n");
+										break;
 									}
 									else
-									{ //NOTE: Failed to register window class with the OS
+									{
+										OutputDebugStringA("CRC Check Succeeded - Chunk Data Valid!!!\n");
 
+										if(CHeader->u32Type == FourCC("IHDR") )
+										{
+											OutputDebugStringA("Header Found\n");
+											Header = (PNG_Header*)((char*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) );
+											Header->Width = SwapEndianess(Header->Width);
+											Header->Height = SwapEndianess(Header->Height);
+											UncompressedPixels = (uint8*)malloc( Header->Width * Header->Height * 8 ); // NOTE: 8 Bytes Per Pixel
+										}
+
+										if(CHeader->u32Type == FourCC("IDAT"))
+										{
+											OutputDebugStringA("Data Found\n");
+										}
+
+										if(CHeader->u32Type == FourCC("IEND"))
+										{
+											OutputDebugStringA("End found\n");
+											break;
+										}
+
+									Offset += (CHeader->Length) + sizeof( PNG_ChunkHeader  ) + sizeof( PNG_ChunkFooter );
+								}
+
+							}
+
+								if( RegisterClassA( &WindowClass ) )
+								{
+									HWND Window = CreateWindowExA
+										(
+											0,
+											WindowClass.lpszClassName,
+											"WIN32_APP",
+											WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+											//Size & Position
+											CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+											0,
+											0,
+											instance,
+											0
+									);
+
+									real32 TargetSecondsPerFrame = 1.0f / 60;
+									UINT DesiredSchedulerMS = 1;
+									bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+
+									LARGE_INTEGER PerfCounterFrequencyResult;
+									QueryPerformanceFrequency( &PerfCounterFrequencyResult );
+									Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+
+									if( Window )
+									{
+										LARGE_INTEGER LastCounter = Win_GetWallClock();
+
+										while( GlobalRunning )
+										{
+
+											//TODO: Render/Draw the PNG
+											ProcessPendingMessages();
+
+											LARGE_INTEGER WorkCounter = Win_GetWallClock();
+											real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+											real32 SecondsElapsedForFrame = WorkSecondsElapsed;
+											if( SecondsElapsedForFrame < TargetSecondsPerFrame )
+											{
+												if( SleepIsGranular )
+												{
+													DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
+													if(SleepMS > 0)
+													{
+														Sleep(SleepMS);
+													}
+												}
+
+												real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+
+												if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+												{
+													//TODO: Log the missed sleep here
+
+												}
+
+												while( SecondsElapsedForFrame < TargetSecondsPerFrame )
+												{
+													SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
+												}
+											}
+											else
+											{
+												//TODO: MISSED FRAME RATE
+												//TODO: Logging
+											}
+											LARGE_INTEGER EndCounter = Win_GetWallClock();
+											LastCounter = EndCounter;
+										}
 									}
 								}
+								else
+								{ //NOTE: Failed to register window class with the OS
+
+								}
+								free( UncompressedPixels );
 							}
 						}
-						CloseHandle( png.File );
-						VirtualFree( png.Memory, 0, MEM_RELEASE );
 					}
 				}
+				CloseHandle( File );
+				VirtualFree( FileMemory, 0, MEM_RELEASE );
 			}
 		}
 	}

@@ -1,6 +1,9 @@
 #ifndef STRING_UTILS_H
 #define STRING_UTILS_H
 
+// 4 Characters compare macro
+#define FourCC(string) (*(uint32*)(string))
+
 internal bool32
 New_CompareString( char* String1, int String1Count, char* String2, int String2Count )
 { //NOTE: We Could rework this to look for the Null terminator instead of
