@@ -435,8 +435,17 @@ WinMain
 												0
 										);
 
+										real32 TargetSecondsPerFrame = 1.0f / 60;
+										UINT DesiredSchedulerMS = 1;
+										bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+
+										LARGE_INTEGER PerfCounterFrequencyResult;
+										QueryPerformanceFrequency( &PerfCounterFrequencyResult );
+										Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+
 										if( Window )
 										{
+											LARGE_INTEGER LastCounter = Win_GetWallClock();
 
 											while( GlobalRunning )
 											{
@@ -444,6 +453,42 @@ WinMain
 												//TODO: Render/Draw the PNG
 												ProcessPendingMessages();
 
+												LARGE_INTEGER WorkCounter = Win_GetWallClock();
+												real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+												real32 SecondsElapsedForFrame = WorkSecondsElapsed;
+												if( SecondsElapsedForFrame < TargetSecondsPerFrame )
+												{
+													if( SleepIsGranular )
+													{
+														DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
+														if(SleepMS > 0)
+														{
+															Sleep(SleepMS);
+														}
+													}
+
+													real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+
+													if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+													{
+														//TODO: Log the missed sleep here
+
+													}
+
+													while( SecondsElapsedForFrame < TargetSecondsPerFrame )
+													{
+														SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
+													}
+												}
+												else
+												{
+													//TODO: MISSED FRAME RATE
+													//TODO: Logging
+												}
+												LARGE_INTEGER EndCounter = Win_GetWallClock();
+												LastCounter = EndCounter;
 											}
 										}
 									}
