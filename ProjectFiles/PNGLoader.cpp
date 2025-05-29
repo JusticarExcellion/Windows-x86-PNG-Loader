@@ -418,6 +418,7 @@ WinMain
 								{
 									uint8* UncompressedPixels = NULL;
 									UncompressedPixels = (uint8*)malloc( Header->Width * Header->Height * BytesPerPixel );
+									OutputDebugStringA("Decompressing PNG DATA...\n");
 
 									if( RegisterClassA( &WindowClass ) )
 									{
