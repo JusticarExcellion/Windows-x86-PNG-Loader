@@ -275,6 +275,7 @@ WinMain
 	HANDLE File = NULL;
 	char Filename[ WIN32_FILE_NAME_COUNT ];
 	void* FileMemory = NULL;
+	uint32 BytesPerPixel = 8;
 
 	if( SUCCEEDED(hr) )
 	{
@@ -313,8 +314,9 @@ WinMain
 								Offset += sizeof( PNG_Signature );
 								PNG_Header* Header = NULL;
 								PNG_IDAT_Header* IDAT_Header = NULL;
+								void* IDAT_Data = NULL;
 
-								while( Offset < FileSize.QuadPart )
+								while( Offset < FileSize.QuadPart && Valid )
 								{ //Loading All of the data
 									PNG_Chunk_Header* CHeader = NULL;
 									void* CData = NULL;
@@ -322,8 +324,13 @@ WinMain
 
 									CHeader = (PNG_Chunk_Header*)((char*)FileMemory + Offset);
 									CHeader->Length = SwapEndianess( CHeader->Length );
+
+									#if DEBUG_PNG
 									Assert( CHeader->Length < 2147483647 );
 									Assert( (Offset + CHeader->Length) < FileSize.QuadPart ); // NOTE: Ensures that we never write to unallocated memory
+									#else if BUILD_PNG
+									Valid = (CHeader->Length < 2147483647);
+									#endif
 
 									CData = (void*)((char*)FileMemory + Offset + sizeof(PNG_ChunkHeader));
 
@@ -358,6 +365,7 @@ WinMain
 										if(CHeader->u32Type == FourCC("IDAT") && !IDAT_Header )
 										{
 											IDAT_Header= (PNG_IDAT_Header*)CData;
+											IDAT_Data = (char*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) + sizeof(PNG_IDAT_Header);
 											//TODO: We either need to identify
 											//the chunks and earmark them or we
 											//need to know where the IDAT Chunks
@@ -377,32 +385,39 @@ WinMain
 
 								}
 
+								Valid = (Header && IDAT_Header && IDAT_Data); //TODO: There
+								// should be a better way to validate these
 
-								if( Header && IDAT_Header )
+								if( Valid )
 								{
-									//TODO: Add in debug builds for these
-									//asserts otherwise so in the actual
-									//application we can fail out and
-									//throw an error to the user
+									uint8 CompressionMethod = ( IDAT_Header->ZlibFlagsCode & 0xF );
+									uint8 CompressionInfo = ( IDAT_Header->ZlibFlagsCode ) >> 4;
+									uint8 FCheck = (IDAT_Header->ZlibAdditionalFlags & 0x1F );
+									uint8 FDict = (IDAT_Header->ZlibAdditionalFlags & 0x20 ) >> 5;
+									uint8 FLevel = (IDAT_Header->ZlibAdditionalFlags ) >> 6;
+
+									#if DEBUG_PNG
 									Assert( Header->Width != 0 );
 									Assert( Header->Height != 0 );
 									Assert( Header->FilterMethod == 0 );
 									Assert( Header->CompressionMethod == 0 );
-
-									int CompressionMethod = ( IDAT_Header->ZlibFlagsCode & 0xF );
-									int CompressionInfo = ( IDAT_Header->ZlibFlagsCode ) >> 4;
-									int FCheck = (IDAT_Header->ZlibAdditionalFlags & 0x1F );
-									int FDict = (IDAT_Header->ZlibAdditionalFlags & 0x20 ) >> 5;
-									int FLevel = (IDAT_Header->ZlibAdditionalFlags ) >> 6;
-
 									Assert( CompressionMethod == 8 );
 									Assert( FDict == 0 );
+									#else if BUILD_PNG
+									Valid = Valid && ( Header->Width != 0 );
+									Valid = Valid && ( Header->Height != 0 );
+									Valid = Valid && ( Header->FilterMethod == 0 );
+									Valid = Valid && ( Header->CompressionMethod == 0 );
+									Valid = Valid && ( CompressionMethod == 8 );
+									Valid = Valid && ( FDict == 0 );
+									#endif
+									
 								}
 
 								if( Valid )
 								{
 									uint8* UncompressedPixels = NULL;
-									UncompressedPixels = (uint8*)malloc( Header->Width * Header->Height * 8 ); // NOTE: 8 Bytes Per Pixel
+									UncompressedPixels = (uint8*)malloc( Header->Width * Header->Height * BytesPerPixel );
 
 									if( RegisterClassA( &WindowClass ) )
 									{
