@@ -306,33 +306,41 @@ WinMain
 						if( ReadFile( File, FileMemory, FileSize.LowPart, &BytesRead, 0 ) )
 						{
 							Signature = (PNG_Signature*)FileMemory;
-							Offset += sizeof( PNG_Signature );
-							if( ValidPNGSignature( Signature ) )
+							bool32 Valid = ValidPNGSignature( Signature );
+
+							if( Valid )
 							{
+								Offset += sizeof( PNG_Signature );
 								PNG_Header* Header = NULL;
-								uint8* UncompressedPixels = NULL;
+								PNG_IDAT_Header* IDAT_Header = NULL;
+
 								while( Offset < FileSize.QuadPart )
 								{ //Loading All of the data
+									PNG_Chunk_Header* CHeader = NULL;
+									void* CData = NULL;
+									PNG_Chunk_Footer* CFooter = NULL;
 
-									PNG_ChunkHeader* CHeader = (PNG_ChunkHeader*)((char*)FileMemory + Offset);
-
+									CHeader = (PNG_Chunk_Header*)((char*)FileMemory + Offset);
 									CHeader->Length = SwapEndianess( CHeader->Length );
 									Assert( CHeader->Length < 2147483647 );
 									Assert( (Offset + CHeader->Length) < FileSize.QuadPart ); // NOTE: Ensures that we never write to unallocated memory
 
+									CData = (void*)((char*)FileMemory + Offset + sizeof(PNG_ChunkHeader));
+
 									char TextBuffer[256] = {};
-									_snprintf_s( TextBuffer,sizeof(TextBuffer), "Chunk Type %c%c%c%c\n", CHeader->Type[0],CHeader->Type[1],CHeader->Type[2],CHeader->Type[3] );
+									_snprintf_s( TextBuffer,sizeof(TextBuffer), "Chunk Type %c%c%c%c, (%u)\n", CHeader->Type[0],CHeader->Type[1],CHeader->Type[2],CHeader->Type[3], CHeader->Length );
 									OutputDebugStringA( TextBuffer );
 
-									PNG_ChunkFooter* CFooter = (PNG_ChunkFooter*)((char*)FileMemory + Offset + ( sizeof(PNG_ChunkHeader) + CHeader->Length ) );
+									CFooter = (PNG_Chunk_Footer*)((char*)FileMemory + Offset + ( sizeof(PNG_ChunkHeader) + CHeader->Length ) );
 									CFooter->CRC = SwapEndianess( CFooter->CRC );
 
-									uint32 CalculatedCRC = CalculateCRC( ( (char*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) ), CHeader );
+									uint32 CalculatedCRC = CalculateCRC( (char*)CData, CHeader );
 									if( CFooter->CRC != CalculatedCRC )
 									{//NOTE: Data is corrupted
 										//Error / crash
 										//application
 										OutputDebugStringA("CRC Check Failed - Chunk Data Invalid!!!\n");
+										Valid = false;
 										break;
 									}
 									else
@@ -342,15 +350,19 @@ WinMain
 										if(CHeader->u32Type == FourCC("IHDR") )
 										{
 											OutputDebugStringA("Header Found\n");
-											Header = (PNG_Header*)((char*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) );
+											Header = (PNG_Header*)CData;
 											Header->Width = SwapEndianess(Header->Width);
 											Header->Height = SwapEndianess(Header->Height);
-											UncompressedPixels = (uint8*)malloc( Header->Width * Header->Height * 8 ); // NOTE: 8 Bytes Per Pixel
 										}
 
-										if(CHeader->u32Type == FourCC("IDAT"))
+										if(CHeader->u32Type == FourCC("IDAT") && !IDAT_Header )
 										{
-											OutputDebugStringA("Data Found\n");
+											IDAT_Header= (PNG_IDAT_Header*)CData;
+											//TODO: We either need to identify
+											//the chunks and earmark them or we
+											//need to know where the IDAT Chunks
+											//begin and end because we know they
+											//are contiguous
 										}
 
 										if(CHeader->u32Type == FourCC("IEND"))
@@ -359,89 +371,118 @@ WinMain
 											break;
 										}
 
-									Offset += (CHeader->Length) + sizeof( PNG_ChunkHeader  ) + sizeof( PNG_ChunkFooter );
+
+										Offset += (CHeader->Length) + sizeof( PNG_ChunkHeader  ) + sizeof( PNG_ChunkFooter );
+									}
+
 								}
 
-							}
 
-								if( RegisterClassA( &WindowClass ) )
+								if( Header && IDAT_Header )
 								{
-									HWND Window = CreateWindowExA
-										(
-											0,
-											WindowClass.lpszClassName,
-											"WIN32_APP",
-											WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-											//Size & Position
-											CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-											0,
-											0,
-											instance,
-											0
-									);
+									//TODO: Add in debug builds for these
+									//asserts otherwise so in the actual
+									//application we can fail out and
+									//throw an error to the user
+									Assert( Header->Width != 0 );
+									Assert( Header->Height != 0 );
+									Assert( Header->FilterMethod == 0 );
+									Assert( Header->CompressionMethod == 0 );
 
-									real32 TargetSecondsPerFrame = 1.0f / 60;
-									UINT DesiredSchedulerMS = 1;
-									bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+									int CompressionMethod = ( IDAT_Header->ZlibFlagsCode & 0xF );
+									int CompressionInfo = ( IDAT_Header->ZlibFlagsCode ) >> 4;
+									int FCheck = (IDAT_Header->ZlibAdditionalFlags & 0x1F );
+									int FDict = (IDAT_Header->ZlibAdditionalFlags & 0x20 ) >> 5;
+									int FLevel = (IDAT_Header->ZlibAdditionalFlags ) >> 6;
 
-									LARGE_INTEGER PerfCounterFrequencyResult;
-									QueryPerformanceFrequency( &PerfCounterFrequencyResult );
-									Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+									Assert( CompressionMethod == 8 );
+									Assert( FDict == 0 );
+								}
 
-									if( Window )
+								if( Valid )
+								{
+									uint8* UncompressedPixels = NULL;
+									UncompressedPixels = (uint8*)malloc( Header->Width * Header->Height * 8 ); // NOTE: 8 Bytes Per Pixel
+
+									if( RegisterClassA( &WindowClass ) )
 									{
-										LARGE_INTEGER LastCounter = Win_GetWallClock();
+										HWND Window = CreateWindowExA
+											(
+												0,
+												WindowClass.lpszClassName,
+												"WIN32_APP",
+												WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+												//Size & Position
+												CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+												0,
+												0,
+												instance,
+												0
+										);
 
-										while( GlobalRunning )
+										real32 TargetSecondsPerFrame = 1.0f / 60;
+										UINT DesiredSchedulerMS = 1;
+										bool32 SleepIsGranular = ( timeBeginPeriod( DesiredSchedulerMS ) == TIMERR_NOERROR );
+
+										LARGE_INTEGER PerfCounterFrequencyResult;
+										QueryPerformanceFrequency( &PerfCounterFrequencyResult );
+										Global_PerfCounterFrequency = PerfCounterFrequencyResult.QuadPart;
+
+										if( Window )
 										{
+											LARGE_INTEGER LastCounter = Win_GetWallClock();
 
-											//TODO: Render/Draw the PNG
-											ProcessPendingMessages();
-
-											LARGE_INTEGER WorkCounter = Win_GetWallClock();
-											real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-											real32 SecondsElapsedForFrame = WorkSecondsElapsed;
-											if( SecondsElapsedForFrame < TargetSecondsPerFrame )
+											while( GlobalRunning )
 											{
-												if( SleepIsGranular )
+
+												//TODO: Render/Draw the PNG
+												ProcessPendingMessages();
+
+												LARGE_INTEGER WorkCounter = Win_GetWallClock();
+												real32 WorkSecondsElapsed = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+												real32 SecondsElapsedForFrame = WorkSecondsElapsed;
+												if( SecondsElapsedForFrame < TargetSecondsPerFrame )
 												{
-													DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
-													if(SleepMS > 0)
+													if( SleepIsGranular )
 													{
-														Sleep(SleepMS);
+														DWORD SleepMS = (DWORD)( (TargetSecondsPerFrame - SecondsElapsedForFrame) * 1000.0f);
+														if(SleepMS > 0)
+														{
+															Sleep(SleepMS);
+														}
+													}
+
+													real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
+
+
+													if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+													{
+														//TODO: Log the missed sleep here
+
+													}
+
+													while( SecondsElapsedForFrame < TargetSecondsPerFrame )
+													{
+														SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
 													}
 												}
-
-												real32 TestSecondsElapsedForFrame = Win_GetSecondsElapsed( LastCounter, WorkCounter );
-
-
-												if( TestSecondsElapsedForFrame < TargetSecondsPerFrame )
+												else
 												{
-													//TODO: Log the missed sleep here
-
+													//TODO: MISSED FRAME RATE
+													//TODO: Logging
 												}
-
-												while( SecondsElapsedForFrame < TargetSecondsPerFrame )
-												{
-													SecondsElapsedForFrame = Win_GetSecondsElapsed(LastCounter, Win_GetWallClock() );
-												}
+												LARGE_INTEGER EndCounter = Win_GetWallClock();
+												LastCounter = EndCounter;
 											}
-											else
-											{
-												//TODO: MISSED FRAME RATE
-												//TODO: Logging
-											}
-											LARGE_INTEGER EndCounter = Win_GetWallClock();
-											LastCounter = EndCounter;
 										}
 									}
-								}
-								else
-								{ //NOTE: Failed to register window class with the OS
+									else
+									{ //NOTE: Failed to register window class with the OS
 
+									}
+									if( UncompressedPixels ) free( UncompressedPixels );
 								}
-								free( UncompressedPixels );
 							}
 						}
 					}

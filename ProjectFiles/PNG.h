@@ -38,7 +38,7 @@ typedef struct PNG_Palette
 	Color Colors[256];
 }PNG_Palette;
 
-typedef struct PNG_ChunkHeader
+typedef struct PNG_Chunk_Header
 {
 	uint32 Length;
 	union
@@ -48,10 +48,21 @@ typedef struct PNG_ChunkHeader
 	};
 }PNG_ChunkHeader;
 
-typedef struct PNG_ChunkFooter
+typedef struct PNG_Chunk_Footer
 {
 	uint32 CRC;
 }PNG_ChunkFooter;
+
+typedef struct PNG_IDAT_Header
+{
+	uint8 ZlibFlagsCode;
+	uint8 ZlibAdditionalFlags;
+}PNG_IDAT_Header;
+
+typedef struct PNG_IDAT_Footer
+{
+	uint32 CheckValue;
+}PNG_IDAT_Footer;
 
 global uint8 PNGSignature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
 
