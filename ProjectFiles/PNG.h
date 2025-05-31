@@ -59,10 +59,12 @@ typedef struct PNG_IDAT_Header
 	uint8 ZlibAdditionalFlags;
 }PNG_IDAT_Header;
 
-typedef struct PNG_IDAT_Footer
+typedef struct IDAT_Chunk
 {
-	uint32 CheckValue;
-}PNG_IDAT_Footer;
+	uint8 *Data;
+	uint32 Length;
+	IDAT_Chunk* Next;
+} IDAT_Chunk;
 
 global uint8 PNGSignature[8] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
 
@@ -131,6 +133,25 @@ internal uint32
 CalculateCRC( char* buffer, PNG_ChunkHeader* Header )
 {
 	return UpdateCRC(0xFFFFFFFFL,  buffer, Header ) ^ 0xFFFFFFFFL;
+}
+
+internal IDAT_Chunk*
+AllocateDataChunk( )
+{
+	IDAT_Chunk* Result = (IDAT_Chunk*)malloc( sizeof(IDAT_Chunk) );
+	return Result;
+}
+
+internal void
+FreeDataChunks( IDAT_Chunk* First )
+{
+	IDAT_Chunk* Current = First;
+	while( Current )
+	{
+		IDAT_Chunk* Next = Current->Next;
+		free( Current );
+		Current = Next;
+	}
 }
 
 //******* Filtering *******//

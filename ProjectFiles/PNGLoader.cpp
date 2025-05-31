@@ -50,6 +50,7 @@ global uint32 CRC_TABLE[256] = {}; //TODO: Could we entirely precompute this at
 
 #include "StringUtils.h"
 #include "PNG.h"
+#include "BitReader.h"
 
 inline uint32
 SwapEndianess( uint32 value )
@@ -138,6 +139,14 @@ GetPNGFile( char* PNG_Filename )
 
 
 	return Valid;
+}
+
+inline uint32
+GetBits( uint8**Data, int bitLength )
+{
+	uint32 Result = 0;
+	*Data += bitLength;
+	return Result;
 }
 
 LRESULT CALLBACK
@@ -314,7 +323,8 @@ WinMain
 								Offset += sizeof( PNG_Signature );
 								PNG_Header* Header = NULL;
 								PNG_IDAT_Header* IDAT_Header = NULL;
-								void* IDAT_Data = NULL;
+								IDAT_Chunk* FirstDataChunk = NULL;
+								IDAT_Chunk* LastDataChunk = NULL;
 
 								while( Offset < FileSize.QuadPart && Valid )
 								{ //Loading All of the data
@@ -328,7 +338,8 @@ WinMain
 									#if DEBUG_PNG
 									Assert( CHeader->Length < 2147483647 );
 									Assert( (Offset + CHeader->Length) < FileSize.QuadPart ); // NOTE: Ensures that we never write to unallocated memory
-									#else if BUILD_PNG
+									#endif
+									#if BUILD_PNG
 									Valid = (CHeader->Length < 2147483647);
 									#endif
 
@@ -343,9 +354,7 @@ WinMain
 
 									uint32 CalculatedCRC = CalculateCRC( (char*)CData, CHeader );
 									if( CFooter->CRC != CalculatedCRC )
-									{//NOTE: Data is corrupted
-										//Error / crash
-										//application
+									{
 										OutputDebugStringA("CRC Check Failed - Chunk Data Invalid!!!\n");
 										Valid = false;
 										break;
@@ -362,15 +371,29 @@ WinMain
 											Header->Height = SwapEndianess(Header->Height);
 										}
 
-										if(CHeader->u32Type == FourCC("IDAT") && !IDAT_Header )
+										if(CHeader->u32Type == FourCC("IDAT") )
 										{
-											IDAT_Header= (PNG_IDAT_Header*)CData;
-											IDAT_Data = (char*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) + sizeof(PNG_IDAT_Header);
-											//TODO: We either need to identify
-											//the chunks and earmark them or we
-											//need to know where the IDAT Chunks
-											//begin and end because we know they
-											//are contiguous
+											if(!IDAT_Header)
+											{
+												IDAT_Header= (PNG_IDAT_Header*)CData;
+											}
+
+											IDAT_Chunk* DataChunk = AllocateDataChunk();
+											#if PNG_DEBUG
+											Assert( DataChunk != NULL );
+											#endif
+											#if PNG_RELEASE
+											if(!DataChunk)
+											{
+												Valid = false;
+												break;
+											}
+											#endif
+											DataChunk->Length = CHeader->Length;
+											DataChunk->Data = (uint8*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) + sizeof(PNG_IDAT_Header);
+											DataChunk->Next = NULL;
+											//NOTE: Muratorism
+											LastDataChunk = ( ( LastDataChunk ? LastDataChunk->Next : FirstDataChunk ) = DataChunk);
 										}
 
 										if(CHeader->u32Type == FourCC("IEND"))
@@ -385,7 +408,7 @@ WinMain
 
 								}
 
-								Valid = (Header && IDAT_Header && IDAT_Data); //TODO: There
+								Valid = (Header && IDAT_Header ); //TODO: There
 								// should be a better way to validate these
 
 								if( Valid )
@@ -403,7 +426,8 @@ WinMain
 									Assert( Header->CompressionMethod == 0 );
 									Assert( CompressionMethod == 8 );
 									Assert( FDict == 0 );
-									#else if BUILD_PNG
+									#endif
+									#if BUILD_PNG
 									Valid = Valid && ( Header->Width != 0 );
 									Valid = Valid && ( Header->Height != 0 );
 									Valid = Valid && ( Header->FilterMethod == 0 );
@@ -420,13 +444,99 @@ WinMain
 									UncompressedPixels = (uint8*)malloc( Header->Width * Header->Height * BytesPerPixel );
 									OutputDebugStringA("Decompressing PNG DATA...\n");
 
+									IDAT_Chunk* Current = FirstDataChunk;
+									BitStream BitData = {};
+									uint8 BFinal = 0;
+									uint8 BType = 0;
+									while( BFinal == 0 && Current )
+									{
+										BitData.Stream = Current->Data;
+										BitData.LengthOfStream = Current->Length;
+
+										uint8 CheckValue = BitData.Stream[0] & 7;
+										Refill_LSB( &BitData );
+										uint64 Result = Peek_LSB( &BitData, 3 );
+										Consume_LSB( &BitData, 3 );
+
+										Assert(Result == CheckValue);
+										BFinal = (uint8)Result >> 2;
+										BType = (uint8)Result & 3;
+
+										if( BType == 0 )
+										{
+											//TODO: We are getting errors with
+											//outputting getting mismatched Len
+											//& NLEN we need to do some more
+											//testing and validation to make
+											//sure that is all correct
+											Consume_LSB( &BitData, BitData.BitCount );
+											Refill_LSB( &BitData );
+											uint64 Lengths = Peek_LSB( &BitData, 32 );
+											uint32 Len = (uint32)(Lengths & 0xFFFF );
+											uint32 NLen = (uint32)( Lengths >> 16 );
+											Consume_LSB( &BitData, 32 );
+
+											if( Len != (uint16)(~NLen) )
+											{
+												OutputDebugStringA("Len != NLen!!!\n");
+											}
+										}
+										else if( BType == 3)
+										{
+											OutputDebugStringA("RESERVED DATA SET FOUND!!!!\n");
+											Valid = false;
+											break;
+										}
+										else
+										{
+											if( BType == 2 )
+											{ //TODO: Read the Dynamic Huffman tree
+												//here
+											}
+
+											for(;;)
+											{
+												uint32 literalLen = 0;
+												if( literalLen < 256 )
+												{
+													//TODO: Copy to outputstream
+
+													uint32 Value = literalLen;
+													//Copy to Uncompressed Pixel
+													//Data
+
+												}
+												else
+												{
+													if( literalLen == 256 )
+													{
+														OutputDebugStringA("End of Block\n");
+														break;
+													}
+													else if( literalLen > 256 )
+													{
+														uint32 Length = literalLen - 256;
+														uint32 Distance = 0;
+														for( uint32 Index = 0; Index < Length; ++Index )
+														{
+															//TODO: Write to
+															//output stream
+														}
+													}
+												}
+											}
+
+										}
+										Current = Current->Next;
+									} 
+
 									if( RegisterClassA( &WindowClass ) )
 									{
 										HWND Window = CreateWindowExA
 											(
 												0,
 												WindowClass.lpszClassName,
-												"WIN32_APP",
+												"WIN64_PNG_Loader",
 												WS_OVERLAPPEDWINDOW | WS_VISIBLE,
 												//Size & Position
 												CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -441,10 +551,7 @@ WinMain
 
 											while( GlobalRunning )
 											{
-
-												//TODO: Render/Draw the PNG
 												ProcessPendingMessages();
-
 											}
 										}
 									}
@@ -453,6 +560,11 @@ WinMain
 
 									}
 									if( UncompressedPixels ) free( UncompressedPixels );
+								}
+
+								if( FirstDataChunk )
+								{
+									FreeDataChunks( FirstDataChunk );
 								}
 							}
 						}
