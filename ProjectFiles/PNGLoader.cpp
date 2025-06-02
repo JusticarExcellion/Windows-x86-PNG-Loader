@@ -385,7 +385,7 @@ WinMain
 											}
 											#endif
 											DataChunk->Length = CHeader->Length;
-											DataChunk->Data = (uint8*)FileMemory + Offset + sizeof( PNG_ChunkHeader ) + sizeof(PNG_IDAT_Header);
+											DataChunk->Data = (uint8*)CData;
 											DataChunk->Next = NULL;
 											//NOTE: Muratorism
 											LastDataChunk = ( ( LastDataChunk ? LastDataChunk->Next : FirstDataChunk ) = DataChunk);
@@ -447,19 +447,19 @@ WinMain
 
 									IDAT_Chunk* Current = FirstDataChunk;
 									BitStream BitData = {};
-									uint8 BFinal = 0;
-									uint8 BType = 0;
+									uint32 BFinal = 0;
+									uint32 BType = 0;
 									while( BFinal == 0 && Current )
 									{
 										BitData.Stream = Current->Data;
 										BitData.Length = Current->Length;
 
-										uint8 CheckValue = BitData.Stream[0] & 7;
-										uint32 Result = ConsumeBits( &BitData, 3 );
+										uint8 CheckValue = BitData.Stream[0];
 
-										Assert(Result == CheckValue);
-										BFinal = (uint8)Result >> 2;
-										BType = (uint8)Result & 3;
+										//TODO: There is still a bug here,
+										//since we fail out every time.
+										BFinal = ConsumeBits( &BitData, 1 );
+										BType = ConsumeBits( &BitData, 2 );
 
 										if( BType == 0 )
 										{
@@ -467,7 +467,9 @@ WinMain
 											uint32 Len = ConsumeBits( &BitData, 16 );
 											uint32 NLen = ConsumeBits( &BitData, 16 );
 
-											if( Len != ~NLen )
+											uint16 nLen = (uint16)(~NLen);
+
+											if( Len != nLen )
 											{
 												OutputDebugStringA("Len != NLen!!!\n");
 											}

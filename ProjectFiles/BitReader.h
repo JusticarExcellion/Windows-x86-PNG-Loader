@@ -51,7 +51,7 @@ ConsumeBits( BitStream *BitStream, int count )
 		uint32 Byte = (uint32)BitStream->Stream[0];
 		BitStream->Stream += sizeof(uint8);
 		BitStream->Length-=sizeof(uint8);
-		BitStream->BitBuffer |= Byte << BitStream->BitCount;
+		BitStream->BitBuffer |= (Byte << BitStream->BitCount);
 		BitStream->BitCount+=8;
 	}
 
