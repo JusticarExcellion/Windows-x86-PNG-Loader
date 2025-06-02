@@ -373,11 +373,6 @@ WinMain
 
 										if(CHeader->u32Type == FourCC("IDAT") )
 										{
-											if(!IDAT_Header)
-											{
-												IDAT_Header= (PNG_IDAT_Header*)CData;
-											}
-
 											IDAT_Chunk* DataChunk = AllocateDataChunk();
 											#if PNG_DEBUG
 											Assert( DataChunk != NULL );
@@ -394,6 +389,12 @@ WinMain
 											DataChunk->Next = NULL;
 											//NOTE: Muratorism
 											LastDataChunk = ( ( LastDataChunk ? LastDataChunk->Next : FirstDataChunk ) = DataChunk);
+											if(!IDAT_Header)
+											{
+												IDAT_Header= (PNG_IDAT_Header*)CData;
+												DataChunk->Data += sizeof(PNG_IDAT_Header);
+												DataChunk->Length-= sizeof(PNG_IDAT_Header);
+											}
 										}
 
 										if(CHeader->u32Type == FourCC("IEND"))
@@ -451,12 +452,10 @@ WinMain
 									while( BFinal == 0 && Current )
 									{
 										BitData.Stream = Current->Data;
-										BitData.LengthOfStream = Current->Length;
+										BitData.Length = Current->Length;
 
 										uint8 CheckValue = BitData.Stream[0] & 7;
-										Refill_LSB( &BitData );
-										uint64 Result = Peek_LSB( &BitData, 3 );
-										Consume_LSB( &BitData, 3 );
+										uint32 Result = ConsumeBits( &BitData, 3 );
 
 										Assert(Result == CheckValue);
 										BFinal = (uint8)Result >> 2;
@@ -464,19 +463,11 @@ WinMain
 
 										if( BType == 0 )
 										{
-											//TODO: We are getting errors with
-											//outputting getting mismatched Len
-											//& NLEN we need to do some more
-											//testing and validation to make
-											//sure that is all correct
-											Consume_LSB( &BitData, BitData.BitCount );
-											Refill_LSB( &BitData );
-											uint64 Lengths = Peek_LSB( &BitData, 32 );
-											uint32 Len = (uint32)(Lengths & 0xFFFF );
-											uint32 NLen = (uint32)( Lengths >> 16 );
-											Consume_LSB( &BitData, 32 );
+											FlushBitBuffer( &BitData );
+											uint32 Len = ConsumeBits( &BitData, 16 );
+											uint32 NLen = ConsumeBits( &BitData, 16 );
 
-											if( Len != (uint16)(~NLen) )
+											if( Len != ~NLen )
 											{
 												OutputDebugStringA("Len != NLen!!!\n");
 											}

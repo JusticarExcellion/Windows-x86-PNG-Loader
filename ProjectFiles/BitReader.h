@@ -10,17 +10,12 @@
 typedef struct BitStream
 {
 	uint8 *Stream;
-	uint32 LengthOfStream;
+	uint32 Length;
 	int32 BitCount;
-	uint64 BitBuffer;
+	uint32 BitBuffer;
 } BitStream;
 
-internal uint64
-ReadLE_U64( BitStream *BitStream )
-{
-	return (uint64)( BitStream->Stream[3] << 24 ) | ( BitStream->Stream[2] << 16 ) | ( BitStream->Stream[1] << 8 ) | (BitStream->Stream[0] );
-}
-
+/*
 internal void
 Refill_LSB( BitStream *BitStream )
 {
@@ -43,5 +38,37 @@ Consume_LSB( BitStream *BitStream , int count )
 	Assert( count <= BitStream->BitCount );
 	BitStream->BitBuffer >>= count;
 	BitStream->BitCount -= count;
+}
+*/
+
+internal uint32
+ConsumeBits( BitStream *BitStream, int count )
+{
+	Assert( count <= 32 );
+	uint32 Result = 0;
+	while( (BitStream->BitCount < count) && (BitStream->Length > 0 ) )
+	{
+		uint32 Byte = (uint32)BitStream->Stream[0];
+		BitStream->Stream += sizeof(uint8);
+		BitStream->Length-=sizeof(uint8);
+		BitStream->BitBuffer |= Byte << BitStream->BitCount;
+		BitStream->BitCount+=8;
+	}
+
+	if( BitStream->BitCount >= count )
+	{
+		BitStream->BitCount -= count;
+		Result = BitStream->BitBuffer & ( (1ull << count) - 1);
+		BitStream->BitBuffer >>= count;
+	}
+
+	return Result;
+}
+
+internal void
+FlushBitBuffer( BitStream *BitStream )
+{
+	BitStream->BitBuffer = 0;
+	BitStream->BitCount = 0;
 }
 #endif
