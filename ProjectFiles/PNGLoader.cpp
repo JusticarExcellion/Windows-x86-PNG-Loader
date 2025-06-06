@@ -453,24 +453,23 @@ WinMain
 									while( BFINAL == 0 && Current )
 									{
 										BitData.Stream = Current->Data;
-										BitData.Length = Current->Length;
+										BitData.StreamLen = Current->Length;
 
-										uint8 CheckValue = BitData.Stream[0];
-
-										//NOTE: Re-Test the Fabian Bit Reading,
-										//now that the memory issues have been
-										//allegedly "fixed"
-										BFINAL = ConsumeBits( &BitData, 1 );
-										BTYPE = ConsumeBits( &BitData, 2 );
+										Refill( &BitData );
+										BFINAL = (uint32)Peek( &BitData, 1 );
+										BTYPE = (uint32)Peek( &BitData, 3 ) >> 1;
+										Consume( &BitData, 3 );
 
 										if( BTYPE == 0 )
 										{//NOTE: Uncompressed data just get
 											//the length and copy it to the
 											//ouput stream
 											
-											FlushBitBuffer( &BitData );
-											uint32 Len = ConsumeBits( &BitData, 16 );
-											uint32 NLen = ConsumeBits( &BitData, 16 );
+											Flush( &BitData );
+											Refill( &BitData );
+											uint32 Len = (uint32)Peek( &BitData, 16 );
+											uint32 NLen = (uint32)Peek( &BitData, 16 ) >> 16;
+											Consume( &BitData, 32 );
 
 											uint16 nLen = (uint16)(~NLen);
 
@@ -498,9 +497,10 @@ WinMain
 											//block
 
 
-												uint32 HLIT = ConsumeBits( &BitData, 5 );
-												uint32 HDIST = ConsumeBits( &BitData, 5 );
-												uint32 HCLEN = ConsumeBits( &BitData, 4);
+												uint32 HLIT = (uint32)Peek( &BitData, 5 );
+												uint32 HDIST = (uint32)Peek( &BitData, 10 ) >> 5;
+												uint32 HCLEN = (uint32)Peek( &BitData, 14 )  >> 10;
+												Consume( &BitData, 14 );
 
 												HLIT += 257;
 												HDIST++;
@@ -518,7 +518,13 @@ WinMain
 												i < HCLEN;
 												++i )
 												{
-													HCLENTable[HCLENSwizzle[i]] = ConsumeBits( &BitData, 3 );
+													if( BitData.BufferLen < 3 )
+													{
+														Refill( &BitData );
+													}
+
+													HCLENTable[HCLENSwizzle[i]] = (uint32)Peek( &BitData, 3 );
+													Consume( &BitData, 3 );
 												}
 
 												HuffmanTable HuffmanDictionary;
@@ -533,6 +539,10 @@ WinMain
 													uint32 RepeatCount = 1;
 													uint32 Value = 0;
 													uint32 LenCode = HuffmanDecode( &HuffmanDictionary, &BitData );
+													if( BitData.BufferLen < 7 )
+													{
+														Refill( &BitData );
+													}
 
 													if( LenCode <= 15 )
 													{
@@ -540,17 +550,20 @@ WinMain
 													}
 													else if( LenCode == 16)
 													{
-														RepeatCount = ConsumeBits( &BitData, 2 ) + 3;
+														RepeatCount = (uint32)Peek( &BitData, 2 ) + 3;
+														Consume( &BitData, 2 );
 														Value = LiteralLengthDistanceTable[ Length - 1 ];
 													}
 													else if( LenCode == 17)
 													{
-														RepeatCount = ConsumeBits( &BitData, 3 ) + 3;
+														RepeatCount = (uint32)Peek( &BitData, 3 ) + 3;
+														Consume( &BitData, 3 );
 														Value = 0;
 													}
 													else if( LenCode == 18)
 													{
-														RepeatCount = ConsumeBits( &BitData, 7 ) + 11;
+														RepeatCount = (uint32)Peek( &BitData, 7 ) + 11;
+														Consume( &BitData, 7 );
 														Value = 0;
 													}
 													else
