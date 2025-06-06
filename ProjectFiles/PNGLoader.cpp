@@ -51,6 +51,7 @@ global uint32 CRC_TABLE[256] = {}; //TODO: Could we entirely precompute this at
 #include "StringUtils.h"
 #include "PNG.h"
 #include "BitReader.h"
+#include "Huffman.h"
 
 inline uint32
 SwapEndianess( uint32 value )
@@ -311,7 +312,7 @@ WinMain
 				{
 					FileMemory = VirtualAlloc( BaseAddress, (size_t)FileSize.QuadPart, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
 
-					if( FileMemory )
+				if( FileMemory )
 					{
 						if( ReadFile( File, FileMemory, FileSize.LowPart, &BytesRead, 0 ) )
 						{
@@ -421,7 +422,7 @@ WinMain
 									uint8 FLevel = (IDAT_Header->ZlibAdditionalFlags ) >> 6;
 
 									#if DEBUG_PNG
-									Assert( Header->Width != 0 );
+								Assert( Header->Width != 0 );
 									Assert( Header->Height != 0 );
 									Assert( Header->FilterMethod == 0 );
 									Assert( Header->CompressionMethod == 0 );
@@ -436,7 +437,7 @@ WinMain
 									Valid = Valid && ( CompressionMethod == 8 );
 									Valid = Valid && ( FDict == 0 );
 									#endif
-									
+
 								}
 
 								if( Valid )
@@ -447,22 +448,26 @@ WinMain
 
 									IDAT_Chunk* Current = FirstDataChunk;
 									BitStream BitData = {};
-									uint32 BFinal = 0;
-									uint32 BType = 0;
-									while( BFinal == 0 && Current )
+									uint32 BFINAL = 0;
+									uint32 BTYPE = 0;
+									while( BFINAL == 0 && Current )
 									{
 										BitData.Stream = Current->Data;
 										BitData.Length = Current->Length;
 
 										uint8 CheckValue = BitData.Stream[0];
 
-										//TODO: There is still a bug here,
-										//since we fail out every time.
-										BFinal = ConsumeBits( &BitData, 1 );
-										BType = ConsumeBits( &BitData, 2 );
+										//NOTE: Re-Test the Fabian Bit Reading,
+										//now that the memory issues have been
+										//allegedly "fixed"
+										BFINAL = ConsumeBits( &BitData, 1 );
+										BTYPE = ConsumeBits( &BitData, 2 );
 
-										if( BType == 0 )
-										{
+										if( BTYPE == 0 )
+										{//NOTE: Uncompressed data just get
+											//the length and copy it to the
+											//ouput stream
+											
 											FlushBitBuffer( &BitData );
 											uint32 Len = ConsumeBits( &BitData, 16 );
 											uint32 NLen = ConsumeBits( &BitData, 16 );
@@ -474,7 +479,7 @@ WinMain
 												OutputDebugStringA("Len != NLen!!!\n");
 											}
 										}
-										else if( BType == 3)
+										else if( BTYPE == 3)
 										{
 											OutputDebugStringA("RESERVED DATA SET FOUND!!!!\n");
 											Valid = false;
@@ -482,46 +487,133 @@ WinMain
 										}
 										else
 										{
-											if( BType == 2 )
-											{ //TODO: Read the Dynamic Huffman tree
-												//here
+
+											HuffmanTable HuffmanLiteralLength;
+											HuffmanTable HuffmanDistance;
+
+											if( BTYPE == 2 )
+											{//NOTE: Decompress
+											//the dynamic huffman table to use
+											//to decompress the current data
+											//block
+
+
+												uint32 HLIT = ConsumeBits( &BitData, 5 );
+												uint32 HDIST = ConsumeBits( &BitData, 5 );
+												uint32 HCLEN = ConsumeBits( &BitData, 4);
+
+												HLIT += 257;
+												HDIST++;
+												HCLEN += 4;
+
+												uint32 HCLENSwizzle[] =
+													{
+														16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15
+												};
+												Assert( HCLEN < ArrayCount(HCLENSwizzle) );
+
+												uint32 HCLENTable[ ArrayCount(HCLENSwizzle) ] = {};
+
+												for( uint32 i = 0;
+												i < HCLEN;
+												++i )
+												{
+													HCLENTable[HCLENSwizzle[i]] = ConsumeBits( &BitData, 3 );
+												}
+
+												HuffmanTable HuffmanDictionary;
+												CreateHuffmanTable( ArrayCount(HCLENSwizzle), (uint32*)HCLENTable, &HuffmanDictionary );
+
+												uint32 LiteralLengthDistanceTable[512] = {};
+												uint32 TotalLength = HLIT + HDIST;
+												uint32 Length = 0;
+
+												while( Length < TotalLength )
+												{
+													uint32 RepeatCount = 1;
+													uint32 Value = 0;
+													uint32 LenCode = HuffmanDecode( &HuffmanDictionary, &BitData );
+
+													if( LenCode <= 15 )
+													{
+														Value = LenCode;
+													}
+													else if( LenCode == 16)
+													{
+														RepeatCount = ConsumeBits( &BitData, 2 ) + 3;
+														Value = LiteralLengthDistanceTable[ Length - 1 ];
+													}
+													else if( LenCode == 17)
+													{
+														RepeatCount = ConsumeBits( &BitData, 3 ) + 3;
+														Value = 0;
+													}
+													else if( LenCode == 18)
+													{
+														RepeatCount = ConsumeBits( &BitData, 7 ) + 11;
+														Value = 0;
+													}
+													else
+													{
+														OutputDebugStringA("HCode Length is greater than 18!!!\n");
+														#if PNG_DEBUG
+														Assert( HCode < 18 );
+														#endif
+
+														Valid = false;
+														break;
+													}
+
+													while( RepeatCount-- )
+													{
+														LiteralLengthDistanceTable[Length++] = Value;
+													}
+												}
+												Assert( Length == TotalLength );
+
+												CreateHuffmanTable( HLIT, LiteralLengthDistanceTable, &HuffmanLiteralLength );
+												CreateHuffmanTable( HDIST, LiteralLengthDistanceTable + HLIT, &HuffmanDistance );
 											}
 
 											for(;;)
 											{
-												uint32 literalLen = 0;
-												if( literalLen < 256 )
+												uint32 LiteralLength = HuffmanDecode( &HuffmanLiteralLength, &BitData );
+												if( LiteralLength < 256 )
 												{
 													//TODO: Copy to outputstream
-
-													uint32 Value = literalLen;
+													uint32 Value = LiteralLength;
 													//Copy to Uncompressed Pixel
 													//Data
 
 												}
 												else
 												{
-													if( literalLen == 256 )
+													if( LiteralLength == 256 )
 													{
 														OutputDebugStringA("End of Block\n");
 														break;
 													}
-													else if( literalLen > 256 )
+													else if( LiteralLength > 256 )
 													{
-														uint32 Length = literalLen - 256;
-														uint32 Distance = 0;
+														uint32 Length = LiteralLength - 256;
+														uint32 Distance = HuffmanDecode( &HuffmanDistance, &BitData );
 														for( uint32 Index = 0; Index < Length; ++Index )
 														{
 															//TODO: Write to
 															//output stream
 														}
 													}
+													else
+													{
+														Valid = false;
+														break;
+													}
 												}
 											}
 
 										}
 										Current = Current->Next;
-									} 
+									}
 
 									if( RegisterClassA( &WindowClass ) )
 									{
