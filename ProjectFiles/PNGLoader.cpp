@@ -583,7 +583,6 @@ WinMain
 													}
 												}
 												Assert( Length == TotalLength );
-
 												CreateHuffmanTable( HLIT, LiteralLengthDistanceTable, &HuffmanLiteralLength );
 												CreateHuffmanTable( HDIST, LiteralLengthDistanceTable + HLIT, &HuffmanDistance );
 											}
@@ -593,7 +592,7 @@ WinMain
 												uint32 LiteralLength = HuffmanDecode( &HuffmanLiteralLength, &BitData );
 												if( LiteralLength < 256 )
 												{
-													//TODO: Copy to outputstream
+													//TODO: Copy to output stream
 													uint32 Value = LiteralLength;
 													//Copy to Uncompressed Pixel
 													//Data
@@ -623,7 +622,6 @@ WinMain
 													}
 												}
 											}
-
 										}
 										Current = Current->Next;
 									}

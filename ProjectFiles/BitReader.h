@@ -22,6 +22,7 @@ Refill( BitStream *BitStream )
 {
 	BitStream->Buffer |= ReadLE_64( BitStream->Stream ) << BitStream->BufferLen;
 	BitStream->Stream += ( 63 - BitStream->BufferLen ) >> 3;
+    BitStream->StreamLen -= ( 63 - BitStream->BufferLen ) >> 3;
 	BitStream->BufferLen |= 56;
 }
 
@@ -48,27 +49,4 @@ Flush( BitStream *BitStream )
 	BitStream->BufferLen = 0;
 }
 
-internal uint32
-ConsumeBits( BitStream *BitStream, int count )
-{
-	Assert( count <= 32 );
-	uint32 Result = 0;
-	while( (BitStream->BufferLen < count) && (BitStream->StreamLen > 0 ) )
-	{
-		uint32 Byte = (uint32)BitStream->Stream[0];
-		BitStream->Stream += sizeof(uint8);
-		BitStream->StreamLen-=sizeof(uint8);
-		BitStream->Buffer |= (Byte << BitStream->BufferLen );
-		BitStream->BufferLen +=8;
-	}
-
-	if( BitStream->BufferLen >= count )
-	{
-		BitStream->BufferLen -= count;
-		Result = BitStream->Buffer & ( (1ull << count) - 1);
-		BitStream->Buffer >>= count;
-	}
-
-	return Result;
-}
 #endif
