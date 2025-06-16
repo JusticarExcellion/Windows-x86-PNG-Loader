@@ -487,8 +487,8 @@ WinMain
 										else
 										{
 
-											HuffmanTable HuffmanLiteralLength;
-											HuffmanTable HuffmanDistance;
+											HuffmanTable HuffmanLiteralLength = AllocateHuffmanTable( 15 );
+											HuffmanTable HuffmanDistance = AllocateHuffmanTable( 15 );
 
 											if( BTYPE == 2 )
 											{//NOTE: Decompress
@@ -527,8 +527,8 @@ WinMain
 													Consume( &BitData, 3 );
 												}
 
-												HuffmanTable HuffmanDictionary;
-												CreateHuffmanTable( ArrayCount(HCLENSwizzle), (uint32*)HCLENTable, &HuffmanDictionary );
+												HuffmanTable HuffmanDictionary = AllocateHuffmanTable( 8 );
+												ComputeHuffman( ArrayCount(HCLENSwizzle), HCLENTable, &HuffmanDictionary );
 
 												uint32 LiteralLengthDistanceTable[512] = {};
 												uint32 TotalLength = HLIT + HDIST;
@@ -583,8 +583,8 @@ WinMain
 													}
 												}
 												Assert( Length == TotalLength );
-												CreateHuffmanTable( HLIT, LiteralLengthDistanceTable, &HuffmanLiteralLength );
-												CreateHuffmanTable( HDIST, LiteralLengthDistanceTable + HLIT, &HuffmanDistance );
+												ComputeHuffman( HLIT, LiteralLengthDistanceTable, &HuffmanLiteralLength );
+												ComputeHuffman( HDIST, LiteralLengthDistanceTable + HLIT , &HuffmanDistance );
 											}
 
 											for(;;)

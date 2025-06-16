@@ -22,14 +22,14 @@ Refill( BitStream *BitStream )
 {
 	BitStream->Buffer |= ReadLE_64( BitStream->Stream ) << BitStream->BufferLen;
 	BitStream->Stream += ( 63 - BitStream->BufferLen ) >> 3;
-    BitStream->StreamLen -= ( 63 - BitStream->BufferLen ) >> 3;
+	BitStream->StreamLen -= ( 63 - BitStream->BufferLen ) >> 3;
 	BitStream->BufferLen |= 56;
 }
 
 internal uint64
 Peek( BitStream *BitStream, int count )
 {
-	Assert( count > 0 && count < 57 );
+	Assert( count >= 0 && count < 57 );
 	Assert( count <= BitStream->BufferLen );
 	return BitStream->Buffer & ( ( 1ull << count ) - 1 );
 }
